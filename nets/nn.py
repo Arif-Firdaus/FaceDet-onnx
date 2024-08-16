@@ -1,10 +1,12 @@
 import os
-
 import cv2
 import numpy
-from onnxruntime import InferenceSession
-import onnxruntime as ort
+# from onnxruntime import InferenceSession
+# import onnxruntime as ort
+from hailo_platform import (HEF, Device, VDevice, HailoStreamInterface, InferVStreams, ConfigureParams,
+    InputVStreamParams, OutputVStreamParams, InputVStreams, OutputVStreams, FormatType)
 
+cwd = os.getcwd()
 
 def distance2box(points, distance, max_shape=None):
     """
@@ -64,12 +66,27 @@ class FaceDetector:
         if self.session is None:
             assert onnx_path is not None
             assert os.path.exists(onnx_path)
-            self.session = InferenceSession(
-                onnx_path, providers=["CoreMLExecutionProvider", "CPUExecutionProvider"]
-            )
-            self.session.graph_optimization_level = (
-                ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-            )
+            # self.session = InferenceSession(
+            #     onnx_path, providers=["CoreMLExecutionProvider", "CPUExecutionProvider"]
+            # )
+            # self.session.graph_optimization_level = (
+            #     ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            # )
+
+            hef = HEF(cwd + "/models_hailo/scrfd_2.5g.hef")
+
+            devices = Device.scan()
+
+            with VDevice(device_ids=devices) as target:
+                configure_params = ConfigureParams.create_from_hef(hef, interface=HailoStreamInterface.PCIe)
+                self.network_group = target.configure(hef, configure_params)[0]
+                self.network_group_params = self.network_group.create_params()
+                self.input_vstream_info = hef.get_input_vstream_infos()[0]
+                self.output_vstream_info = hef.get_output_vstream_infos()[0]
+                self.input_vstreams_params = InputVStreamParams.make_from_network_group(self.network_group, quantized=False, format_type=FormatType.FLOAT32)
+                self.output_vstreams_params = OutputVStreamParams.make_from_network_group(self.network_group, quantized=False, format_type=FormatType.FLOAT32)
+                height, width, channels = hef.get_input_vstream_infos()[0].shape
+
         self.nms_thresh = 0.4
         self.center_cache = {}
         input_cfg = self.session.get_inputs()[0]
@@ -116,7 +133,11 @@ class FaceDetector:
         blob = cv2.dnn.blobFromImage(
             x, 1.0 / 128, input_size, (127.5, 127.5, 127.5), swapRB=True
         )
-        net_outs = self.session.run(self.output_names, {self.input_name: blob})
+        # net_outs = self.session.run(self.output_names, {self.input_name: blob})
+        with InferVStreams(self.network_group, self.input_vstreams_params, self.output_vstreams_params) as infer_pipeline:
+            input_data = {self.input_vstream_info.name: blob}    
+            with self.network_group.activate(self.network_group_params):
+                net_outs = infer_pipeline.infer(input_data)
 
         input_height = blob.shape[2]
         input_width = blob.shape[3]
