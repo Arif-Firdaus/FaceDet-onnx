@@ -1,8 +1,8 @@
 import os
 import cv2
 import numpy
-# from onnxruntime import InferenceSession
-# import onnxruntime as ort
+from onnxruntime import InferenceSession
+import onnxruntime as ort
 from hailo_platform import (HEF, Device, VDevice, HailoStreamInterface, InferVStreams, ConfigureParams,
     InputVStreamParams, OutputVStreamParams, InputVStreams, OutputVStreams, FormatType)
 
@@ -66,31 +66,19 @@ class FaceDetector:
         if self.session is None:
             assert onnx_path is not None
             assert os.path.exists(onnx_path)
-            # self.session = InferenceSession(
-            #     onnx_path, providers=["CoreMLExecutionProvider", "CPUExecutionProvider"]
-            # )
-            # self.session.graph_optimization_level = (
-            #     ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-            # )
-
-            hef = HEF(cwd + "/models_hailo/scrfd_2.5g.hef")
-
-            devices = Device.scan()
-
-            with VDevice(device_ids=devices) as target:
-                configure_params = ConfigureParams.create_from_hef(hef, interface=HailoStreamInterface.PCIe)
-                self.network_group = target.configure(hef, configure_params)[0]
-                self.network_group_params = self.network_group.create_params()
-                self.input_vstream_info = hef.get_input_vstream_infos()[0]
-                self.output_vstream_info = hef.get_output_vstream_infos()[0]
-                self.input_vstreams_params = InputVStreamParams.make_from_network_group(self.network_group, quantized=False, format_type=FormatType.FLOAT32)
-                self.output_vstreams_params = OutputVStreamParams.make_from_network_group(self.network_group, quantized=False, format_type=FormatType.FLOAT32)
-                height, width, channels = hef.get_input_vstream_infos()[0].shape
+            self.session = InferenceSession(
+                "/home/rpi5/tapway/FaceDet-onnx/models_onnx/scrfd_2.5g_bn.onnx", providers=["CPUExecutionProvider"]
+            )
+            self.session.graph_optimization_level = (
+                ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            )
 
         self.nms_thresh = 0.4
         self.center_cache = {}
         input_cfg = self.session.get_inputs()[0]
-        input_shape = input_cfg.shape
+        print(input_cfg)
+        # input_shape = input_cfg.shape
+        input_shape = (1, 3, 640, 640)
         if isinstance(input_shape[2], str):
             self.input_size = None
         else:
@@ -125,7 +113,7 @@ class FaceDetector:
             self._num_anchors = 1
             self.use_kps = True
 
-    def forward(self, x, score_thresh):
+    def forward(self, x, score_thresh, devices):
         scores_list = []
         bboxes_list = []
         points_list = []
@@ -133,11 +121,26 @@ class FaceDetector:
         blob = cv2.dnn.blobFromImage(
             x, 1.0 / 128, input_size, (127.5, 127.5, 127.5), swapRB=True
         )
-        # net_outs = self.session.run(self.output_names, {self.input_name: blob})
-        with InferVStreams(self.network_group, self.input_vstreams_params, self.output_vstreams_params) as infer_pipeline:
-            input_data = {self.input_vstream_info.name: blob}    
-            with self.network_group.activate(self.network_group_params):
-                net_outs = infer_pipeline.infer(input_data)
+        net_outs = self.session.run(self.output_names, {self.input_name: blob})
+        # print(blob.shape)
+        # hef = HEF("/home/rpi5/tapway/FaceDet-onnx/models_hailo/scrfd_2.5g.hef")
+
+        # devices = Device.scan()
+
+        # with VDevice(device_ids=devices) as target:
+        #     configure_params = ConfigureParams.create_from_hef(hef, interface=HailoStreamInterface.PCIe)
+        #     network_group = target.configure(hef, configure_params)[0]
+        #     network_group_params = network_group.create_params()
+        #     input_vstream_info = hef.get_input_vstream_infos()[0]
+        #     output_vstream_info = hef.get_output_vstream_infos()[0]
+        #     input_vstreams_params = InputVStreamParams.make_from_network_group(network_group, quantized=False, format_type=FormatType.FLOAT32)
+        #     output_vstreams_params = OutputVStreamParams.make_from_network_group(network_group, quantized=False, format_type=FormatType.FLOAT32)
+        #     height, width, channels = hef.get_input_vstream_infos()[0].shape
+                
+        #     with InferVStreams(network_group, input_vstreams_params, output_vstreams_params) as infer_pipeline:
+        #         input_data = {input_vstream_info.name: blob}    
+        #         with network_group.activate(network_group_params):
+        #             net_outs = infer_pipeline.infer(input_data)
 
         input_height = blob.shape[2]
         input_width = blob.shape[3]
@@ -189,7 +192,7 @@ class FaceDetector:
         return scores_list, bboxes_list, points_list
 
     def detect(
-        self, img, score_thresh=0.5, input_size=None, max_num=0, metric="default"
+        self, img, devices, score_thresh=0.5, input_size=None, max_num=0, metric="default"
     ):
         assert input_size is not None or self.input_size is not None
         input_size = self.input_size if input_size is None else input_size
@@ -207,7 +210,7 @@ class FaceDetector:
         det_img = numpy.zeros((input_size[1], input_size[0], 3), dtype=numpy.uint8)
         det_img[:new_height, :new_width, :] = resized_img
 
-        scores_list, bboxes_list, points_list = self.forward(det_img, score_thresh)
+        scores_list, bboxes_list, points_list = self.forward(det_img, score_thresh, devices)
 
         scores = numpy.vstack(scores_list)
         scores_ravel = scores.ravel()

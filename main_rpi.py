@@ -11,9 +11,10 @@ from nets.nn import FaceDetector
 from picamera2 import Picamera2
 from libcamera import ColorSpace, controls
 
-from multiprocessing import Process
-from hailo_platform import (HEF, Device, VDevice, HailoStreamInterface, InferVStreams, ConfigureParams,
-    InputVStreamParams, OutputVStreamParams, InputVStreams, OutputVStreams, FormatType)
+# from multiprocessing import Process
+# from hailo_platform import (HEF, Device, VDevice, HailoStreamInterface, InferVStreams, ConfigureParams,
+#     InputVStreamParams, OutputVStreamParams, InputVStreams, OutputVStreams, FormatType)
+from utils import HailoAsyncInference
 
 # warnings.filterwarnings("ignore")
 
@@ -107,7 +108,7 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default=cwd + "/models_onnx/scrfd_2.5g_bn.onnx",
+        default="/home/rpi5/tapway/FaceDet-onnx/models_hailo/scrfd_2.5g.hef",
         help="model file path",
     )
 
@@ -166,17 +167,17 @@ def main():
     }
     pred_to_gender = {0: "F", 1: "M"}
 
-    devices = Device.scan()
+    # devices = Device.scan()
 
-    with VDevice(device_ids=devices) as target:
-        configure_params = ConfigureParams.create_from_hef(hef, interface=HailoStreamInterface.PCIe)
-        network_group = target.configure(hef, configure_params)[0]
-        network_group_params = network_group.create_params()
-        input_vstream_info = hef.get_input_vstream_infos()[0]
-        output_vstream_info = hef.get_output_vstream_infos()[0]
-        input_vstreams_params = InputVStreamParams.make_from_network_group(network_group, quantized=False, format_type=FormatType.FLOAT32)
-        output_vstreams_params = OutputVStreamParams.make_from_network_group(network_group, quantized=False, format_type=FormatType.FLOAT32)
-        height, width, channels = hef.get_input_vstream_infos()[0].shape
+    # with VDevice(device_ids=devices) as target:
+    #     configure_params = ConfigureParams.create_from_hef(hef, interface=HailoStreamInterface.PCIe)
+    #     network_group = target.configure(hef, configure_params)[0]
+    #     network_group_params = network_group.create_params()
+    #     input_vstream_info = hef.get_input_vstream_infos()[0]
+    #     output_vstream_info = hef.get_output_vstream_infos()[0]
+    #     input_vstreams_params = InputVStreamParams.make_from_network_group(network_group, quantized=False, format_type=FormatType.FLOAT32)
+    #     output_vstreams_params = OutputVStreamParams.make_from_network_group(network_group, quantized=False, format_type=FormatType.FLOAT32)
+    #     height, width, channels = hef.get_input_vstream_infos()[0].shape
 
         picam2 = Picamera2()
         picam2.set_controls(
@@ -207,7 +208,7 @@ def main():
             frame = cv2.cvtColor(frame, cv2.COLOR_YUV420p2BGR)
             frame = cv2.flip(frame, 1)
 
-            boxes, points = detector.detect(frame, score_thresh=0.5, input_size=(640, 640))
+            boxes, points = detector.detect(frame, devices, score_thresh=0.5, input_size=(640, 640))
             for box in boxes:
                 x1, y1, x2, y2, score = box
                 x1, y1, x2, y2 = add_margin(frame, (x1, y1, x2, y2))
