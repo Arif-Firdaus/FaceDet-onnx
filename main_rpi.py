@@ -114,7 +114,7 @@ def main():
     args = parser.parse_args()
     detector = FaceDetector(args.model)
 
-    hef = HEF(cwd + "/models_hailo/ageQ.har")
+    hef = HEF(cwd + "/models_hailo/ageQ.hef")
 
     # age_session = InferenceSession(
     #     cwd + "/models_onnx/yolov8n_age_train.onnx",
