@@ -107,20 +107,20 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default=cwd + "/weights/scrfd_2.5g_bn.onnx",
+        default=cwd + "/models_onnx/scrfd_2.5g_bn.onnx",
         help="model file path",
     )
 
     args = parser.parse_args()
     detector = FaceDetector(args.model)
     age_session = InferenceSession(
-        cwd + "/weights/yolov8n_age_train.onnx",
+        cwd + "/models_onnx/yolov8n_age_train.onnx",
         providers=["CoreMLExecutionProvider", "CPUExecutionProvider"],
     )
     age_session.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
     gender_session = InferenceSession(
-        cwd + "/weights/yolov8n_gender_train.onnx",
+        cwd + "/models_onnx/yolov8n_gender_train.onnx",
         providers=["CoreMLExecutionProvider", "CPUExecutionProvider"],
     )
     gender_session.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL

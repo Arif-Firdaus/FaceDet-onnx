@@ -15,7 +15,7 @@ from multiprocessing import Process
 from hailo_platform import (HEF, Device, VDevice, HailoStreamInterface, InferVStreams, ConfigureParams,
     InputVStreamParams, OutputVStreamParams, InputVStreams, OutputVStreams, FormatType)
 
-warnings.filterwarnings("ignore")
+# warnings.filterwarnings("ignore")
 
 mean = [0.0, 0.0, 0.0]
 std = [1.0, 1.0, 1.0]
@@ -94,7 +94,8 @@ def add_margin(img, bbox, height_margin=0.20, width_margin=0.10):
 def preprocess_image(image, input_size=(640, 640)):
     image_resized = cv2.resize(image, input_size, interpolation=cv2.INTER_LINEAR)
     image_resized = cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB)
-    image_resized = (image_resized / 255.0 - mean) / std
+    image_resized = (image_resized)
+    # image_resized = (image_resized / 255.0 - mean) / std
     # image_resized = np.transpose(image_resized, (2, 0, 1))
     image_resized = np.expand_dims(image_resized, axis=0)
     return image_resized.astype(np.float32)
@@ -106,26 +107,26 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default=cwd + "/weights/scrfd_2.5g_bn.onnx",
+        default=cwd + "/models_onnx/scrfd_2.5g_bn.onnx",
         help="model file path",
     )
 
     args = parser.parse_args()
     detector = FaceDetector(args.model)
 
-    hef = HEF("hef_path")
+    hef = HEF(cwd + "/models_hailo/ageQ.har")
 
-    age_session = InferenceSession(
-        cwd + "/weights/yolov8n_age_train.onnx",
-        providers=["CPUExecutionProvider"],
-    )
-    age_session.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    # age_session = InferenceSession(
+    #     cwd + "/models_onnx/yolov8n_age_train.onnx",
+    #     providers=["CPUExecutionProvider"],
+    # )
+    # age_session.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
-    gender_session = InferenceSession(
-        cwd + "/weights/yolov8n_gender_train.onnx",
-        providers=["CPUExecutionProvider"],
-    )
-    gender_session.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    # gender_session = InferenceSession(
+    #     cwd + "/models_onnx/yolov8n_gender_train.onnx",
+    #     providers=["CPUExecutionProvider"],
+    # )
+    # gender_session.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
     age_to_age = {
         0: 0,

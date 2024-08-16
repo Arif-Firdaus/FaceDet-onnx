@@ -17,7 +17,7 @@ pip install opencv-python==4.5.5.64
 ### Note
 
 * This repo supports inference only, see reference for more details
-* See `./weights/*` folder to check list of available models, `_kps` means the model includes 5 keypoints prediction
+* See `./models_onnx/*` folder to check list of available models, `_kps` means the model includes 5 keypoints prediction
 
 #### Reference
 
