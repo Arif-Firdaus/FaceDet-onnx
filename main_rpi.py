@@ -7,8 +7,6 @@ import cv2
 import numpy as np
 
 from nets.nn import FaceDetector
-from onnxruntime import InferenceSession
-import onnxruntime as ort
 
 from picamera2 import Picamera2
 from libcamera import ColorSpace, controls
@@ -112,13 +110,13 @@ def main():
     detector = FaceDetector(args.model)
     age_session = InferenceSession(
         cwd + "/weights/yolov8n_age_train.onnx",
-        providers=["CoreMLExecutionProvider", "CPUExecutionProvider"],
+        providers=["CPUExecutionProvider"],
     )
     age_session.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
     gender_session = InferenceSession(
         cwd + "/weights/yolov8n_gender_train.onnx",
-        providers=["CoreMLExecutionProvider", "CPUExecutionProvider"],
+        providers=["CPUExecutionProvider"],
     )
     gender_session.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
@@ -167,7 +165,7 @@ def main():
     resolution = 320 * 3
     camera_config = picam2.create_video_configuration(
         colour_space=ColorSpace.Rec709(),
-        queue=False,
+        queue=True,
         sensor={"output_size": mode["size"], "bit_depth": mode["bit_depth"]},
         main={"size": (resolution, resolution), "format": "YUV420"},
         buffer_count=3,
@@ -218,7 +216,7 @@ def main():
         num_iterations += 1
         fps = num_iterations / iteration_time
         frame = write_text_top_left(frame, f"{fps:.2f} FPS")
-        cv2.imshow("Webcam", frame)
+        cv2.imshow("Webcam", cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
 
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
