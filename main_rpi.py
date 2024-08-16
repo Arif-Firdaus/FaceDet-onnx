@@ -11,6 +11,10 @@ from nets.nn import FaceDetector
 from picamera2 import Picamera2
 from libcamera import ColorSpace, controls
 
+from multiprocessing import Process
+from hailo_platform import (HEF, Device, VDevice, HailoStreamInterface, InferVStreams, ConfigureParams,
+    InputVStreamParams, OutputVStreamParams, InputVStreams, OutputVStreams, FormatType)
+
 warnings.filterwarnings("ignore")
 
 mean = [0.0, 0.0, 0.0]
@@ -63,7 +67,7 @@ def write_text_top_left(image, text, font_scale=1.5, color=(0, 255, 0), thicknes
     return image
 
 
-def add_margin(img, bbox, height_margin=0.21, width_margin=0.11):
+def add_margin(img, bbox, height_margin=0.20, width_margin=0.10):
     img_width, img_height = img.shape[1], img.shape[0]
     # Unpack the bounding box coordinates
     left, top, right, bottom = bbox
@@ -91,7 +95,7 @@ def preprocess_image(image, input_size=(640, 640)):
     image_resized = cv2.resize(image, input_size, interpolation=cv2.INTER_LINEAR)
     image_resized = cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB)
     image_resized = (image_resized / 255.0 - mean) / std
-    image_resized = np.transpose(image_resized, (2, 0, 1))
+    # image_resized = np.transpose(image_resized, (2, 0, 1))
     image_resized = np.expand_dims(image_resized, axis=0)
     return image_resized.astype(np.float32)
 
@@ -108,6 +112,9 @@ def main():
 
     args = parser.parse_args()
     detector = FaceDetector(args.model)
+
+    hef = HEF("hef_path")
+
     age_session = InferenceSession(
         cwd + "/weights/yolov8n_age_train.onnx",
         providers=["CPUExecutionProvider"],
@@ -157,69 +164,86 @@ def main():
     }
     pred_to_gender = {0: "F", 1: "M"}
 
-    picam2 = Picamera2()
-    picam2.set_controls(
-        {"NoiseReductionMode": controls.draft.NoiseReductionModeEnum.HighQuality}
-    )
-    mode = picam2.sensor_modes[1]
-    resolution = 320 * 3
-    camera_config = picam2.create_video_configuration(
-        colour_space=ColorSpace.Rec709(),
-        queue=True,
-        sensor={"output_size": mode["size"], "bit_depth": mode["bit_depth"]},
-        main={"size": (resolution, resolution), "format": "YUV420"},
-        buffer_count=3,
-    )
-    # ? FPS
-    # ? Sensor modes
-    # ? noise reduction
-    # ? CMA memory
-    picam2.align_configuration(camera_config)
-    print(camera_config["main"])
-    picam2.configure(camera_config)
-    picam2.start()
+    devices = Device.scan()
 
-    start_time = time.time()
-    num_iterations = 0
-    while True:
-        frame = picam2.capture_array("main")
-        frame = cv2.cvtColor(frame, cv2.COLOR_YUV420p2BGR)
-        frame = cv2.flip(frame, 1)
+    with VDevice(device_ids=devices) as target:
+        configure_params = ConfigureParams.create_from_hef(hef, interface=HailoStreamInterface.PCIe)
+        network_group = target.configure(hef, configure_params)[0]
+        network_group_params = network_group.create_params()
+        input_vstream_info = hef.get_input_vstream_infos()[0]
+        output_vstream_info = hef.get_output_vstream_infos()[0]
+        input_vstreams_params = InputVStreamParams.make_from_network_group(network_group, quantized=False, format_type=FormatType.FLOAT32)
+        output_vstreams_params = OutputVStreamParams.make_from_network_group(network_group, quantized=False, format_type=FormatType.FLOAT32)
+        height, width, channels = hef.get_input_vstream_infos()[0].shape
 
-        boxes, points = detector.detect(frame, score_thresh=0.5, input_size=(640, 640))
-        for box in boxes:
-            x1, y1, x2, y2, score = box
-            x1, y1, x2, y2 = add_margin(frame, (x1, y1, x2, y2))
-            cropped_image = frame[y1:y2, x1:x2]
-            processed_image = preprocess_image(cropped_image)
-            res_age = age_session.run(None, {"images": processed_image})
-            res_gender = gender_session.run(None, {"images": processed_image})
-            age = pred_to_age[age_to_age[res_age[0].argmax()]]
-            gender = pred_to_gender[res_gender[0].argmax()]
-            cv2.putText(
-                frame,
-                f"{gender}:{age}",
-                (x1, int(y1 * 0.99)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                2,
-                (0, 255, 0),
-                2,
-                cv2.LINE_AA,
-            )
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        # if points is not None:
-        #     for point in points:
-        #         for kp in point:
-        #             kp = kp.astype(np.int32)
-        #             cv2.circle(frame, tuple(kp), 1, (0, 255, 0), 2)
-        iteration_time = time.time() - start_time
-        num_iterations += 1
-        fps = num_iterations / iteration_time
-        frame = write_text_top_left(frame, f"{fps:.2f} FPS")
-        cv2.imshow("Webcam", cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        picam2 = Picamera2()
+        picam2.set_controls(
+            {"NoiseReductionMode": controls.draft.NoiseReductionModeEnum.HighQuality}
+        )
+        mode = picam2.sensor_modes[1]
+        resolution = 320 * 3
+        camera_config = picam2.create_video_configuration(
+            colour_space=ColorSpace.Rec709(),
+            queue=True,
+            sensor={"output_size": mode["size"], "bit_depth": mode["bit_depth"]},
+            main={"size": (resolution, resolution), "format": "YUV420"},
+            buffer_count=3,
+        )
+        # ? FPS
+        # ? Sensor modes
+        # ? noise reduction
+        # ? CMA memory
+        picam2.align_configuration(camera_config)
+        print(camera_config["main"])
+        picam2.configure(camera_config)
+        picam2.start()
 
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
+        start_time = time.time()
+        num_iterations = 0
+        while True:
+            frame = picam2.capture_array("main")
+            frame = cv2.cvtColor(frame, cv2.COLOR_YUV420p2BGR)
+            frame = cv2.flip(frame, 1)
+
+            boxes, points = detector.detect(frame, score_thresh=0.5, input_size=(640, 640))
+            for box in boxes:
+                x1, y1, x2, y2, score = box
+                x1, y1, x2, y2 = add_margin(frame, (x1, y1, x2, y2))
+                cropped_image = frame[y1:y2, x1:x2]
+                processed_image = preprocess_image(cropped_image)
+                with InferVStreams(network_group, input_vstreams_params, output_vstreams_params) as infer_pipeline:
+                    input_data = {input_vstream_info.name: processed_image}    
+                    with network_group.activate(network_group_params):
+                        res_age = infer_pipeline.infer(input_data)
+                # res_age = age_session.run(None, {"images": processed_image})
+                # res_gender = gender_session.run(None, {"images": processed_image})
+                age = pred_to_age[age_to_age[res_age[0].argmax()]]
+                # gender = pred_to_gender[res_gender[0].argmax()]
+                cv2.putText(
+                    frame,
+                    f"{age}",
+                    # f"{gender}:{age}",
+                    (x1, int(y1 * 0.99)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    2,
+                    (0, 255, 0),
+                    2,
+                    cv2.LINE_AA,
+                )
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            # if points is not None:
+            #     for point in points:
+            #         for kp in point:
+            #             kp = kp.astype(np.int32)
+            #             cv2.circle(frame, tuple(kp), 1, (0, 255, 0), 2)
+            iteration_time = time.time() - start_time
+            num_iterations += 1
+            fps = num_iterations / iteration_time
+            frame = write_text_top_left(frame, f"{fps:.2f} FPS")
+            cv2.imshow("Webcam", cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
 
     end_time = time.time()
     time_elapsed = end_time - start_time
