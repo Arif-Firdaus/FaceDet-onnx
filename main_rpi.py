@@ -114,7 +114,8 @@ def main():
     args = parser.parse_args()
     detector = FaceDetector(args.model)
 
-    hef = HEF(cwd + "/models_hailo/ageQ.hef")
+    hef = HEF(cwd + "/models_hailo/age.hef")
+    # hef = HEF("/home/rpi5/tapway/FaceDet-onnx/models_hailo/age.hef")
 
     # age_session = InferenceSession(
     #     cwd + "/models_onnx/yolov8n_age_train.onnx",
@@ -218,7 +219,8 @@ def main():
                         res_age = infer_pipeline.infer(input_data)
                 # res_age = age_session.run(None, {"images": processed_image})
                 # res_gender = gender_session.run(None, {"images": processed_image})
-                age = pred_to_age[age_to_age[res_age[0].argmax()]]
+                # print(res_age["age/softmax1"])
+                age = pred_to_age[age_to_age[res_age["age/softmax1"][0].argmax()]]
                 # gender = pred_to_gender[res_gender[0].argmax()]
                 cv2.putText(
                     frame,
