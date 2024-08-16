@@ -179,6 +179,7 @@ def main():
     #     output_vstreams_params = OutputVStreamParams.make_from_network_group(network_group, quantized=False, format_type=FormatType.FLOAT32)
     #     height, width, channels = hef.get_input_vstream_infos()[0].shape
     hailo_inference = HailoAsyncInference(cwd + "/models_hailo/age.hef", 1)
+    hailo_inference_face = HailoAsyncInference(cwd + "/models_hailo/scrfd_2.5g.hef", 1)
     height, width, _ = hailo_inference.get_input_shape()
 
     picam2 = Picamera2()
@@ -210,7 +211,7 @@ def main():
         frame = cv2.cvtColor(frame, cv2.COLOR_YUV420p2BGR)
         frame = cv2.flip(frame, 1)
 
-        boxes, points = detector.detect(frame, score_thresh=0.5, input_size=(640, 640))
+        boxes, points = detector.detect(frame, score_thresh=0.5, input_size=(640, 640), hailo_inference_face)
         for box in boxes:
             x1, y1, x2, y2, score = box
             x1, y1, x2, y2 = add_margin(frame, (x1, y1, x2, y2))
@@ -221,7 +222,7 @@ def main():
             #     with network_group.activate(network_group_params):
             #         res_age = infer_pipeline.infer(input_data)
 
-            res_age = hailo_inference.run(preprocess_image)
+            res_age = hailo_inference.run(processed_image)
 
             # res_age = age_session.run(None, {"images": processed_image})
             # res_gender = gender_session.run(None, {"images": processed_image})

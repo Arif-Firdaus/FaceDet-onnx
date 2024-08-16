@@ -113,7 +113,7 @@ class FaceDetector:
             self._num_anchors = 1
             self.use_kps = True
 
-    def forward(self, x, score_thresh):
+    def forward(self, x, score_thresh, hailo_inference_face=None):
         scores_list = []
         bboxes_list = []
         points_list = []
@@ -121,7 +121,7 @@ class FaceDetector:
         blob = cv2.dnn.blobFromImage(
             x, 1.0 / 128, input_size, (127.5, 127.5, 127.5), swapRB=True
         )
-        net_outs = self.session.run(self.output_names, {self.input_name: blob})
+        # net_outs = self.session.run(self.output_names, {self.input_name: blob})
         # print(blob.shape)
         # hef = HEF("/home/rpi5/tapway/FaceDet-onnx/models_hailo/scrfd_2.5g.hef")
 
@@ -141,6 +141,7 @@ class FaceDetector:
         #         input_data = {input_vstream_info.name: blob}    
         #         with network_group.activate(network_group_params):
         #             net_outs = infer_pipeline.infer(input_data)
+        net_outs = hailo_inference_face.run(blob.transpose((0, 2, 3, 1)))
 
         input_height = blob.shape[2]
         input_width = blob.shape[3]
@@ -192,7 +193,7 @@ class FaceDetector:
         return scores_list, bboxes_list, points_list
 
     def detect(
-        self, img, score_thresh=0.5, input_size=None, max_num=0, metric="default"
+        self, img, score_thresh=0.5, input_size=None, max_num=0, metric="default", hailo_inference_face=None
     ):
         assert input_size is not None or self.input_size is not None
         input_size = self.input_size if input_size is None else input_size
@@ -210,7 +211,7 @@ class FaceDetector:
         det_img = numpy.zeros((input_size[1], input_size[0], 3), dtype=numpy.uint8)
         det_img[:new_height, :new_width, :] = resized_img
 
-        scores_list, bboxes_list, points_list = self.forward(det_img, score_thresh)
+        scores_list, bboxes_list, points_list = self.forward(det_img, score_thresh, hailo_inference_face)
 
         scores = numpy.vstack(scores_list)
         scores_ravel = scores.ravel()
