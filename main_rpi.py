@@ -210,7 +210,7 @@ def main():
         frame = cv2.cvtColor(frame, cv2.COLOR_YUV420p2BGR)
         frame = cv2.flip(frame, 1)
 
-        boxes, points = detector.detect(frame, devices, score_thresh=0.5, input_size=(640, 640))
+        boxes, points = detector.detect(frame, score_thresh=0.5, input_size=(640, 640))
         for box in boxes:
             x1, y1, x2, y2, score = box
             x1, y1, x2, y2 = add_margin(frame, (x1, y1, x2, y2))

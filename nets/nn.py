@@ -113,7 +113,7 @@ class FaceDetector:
             self._num_anchors = 1
             self.use_kps = True
 
-    def forward(self, x, score_thresh, devices):
+    def forward(self, x, score_thresh):
         scores_list = []
         bboxes_list = []
         points_list = []
@@ -192,7 +192,7 @@ class FaceDetector:
         return scores_list, bboxes_list, points_list
 
     def detect(
-        self, img, devices, score_thresh=0.5, input_size=None, max_num=0, metric="default"
+        self, img, score_thresh=0.5, input_size=None, max_num=0, metric="default"
     ):
         assert input_size is not None or self.input_size is not None
         input_size = self.input_size if input_size is None else input_size
@@ -210,7 +210,7 @@ class FaceDetector:
         det_img = numpy.zeros((input_size[1], input_size[0], 3), dtype=numpy.uint8)
         det_img[:new_height, :new_width, :] = resized_img
 
-        scores_list, bboxes_list, points_list = self.forward(det_img, score_thresh, devices)
+        scores_list, bboxes_list, points_list = self.forward(det_img, score_thresh)
 
         scores = numpy.vstack(scores_list)
         scores_ravel = scores.ravel()
