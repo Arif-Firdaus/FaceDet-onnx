@@ -295,3 +295,40 @@ class FaceDetector:
             order = order[indices + 1]
 
         return keep
+
+
+"""
+after transpose only, no reshape included
+
+{(1, 40, 40, 2): 'scrfd_2_5g/conv49',   score_16
+(1, 20, 20, 2): 'scrfd_2_5g/conv55',    score_32
+(1, 40, 40, 8): 'scrfd_2_5g/conv50',    bbox_16
+(1, 80, 80, 2): 'scrfd_2_5g/conv42',    score_8
+(1, 80, 80, 8): 'scrfd_2_5g/conv43',    bbox_8
+(1, 80, 80, 20): 'scrfd_2_5g/conv44',   kps_8
+(1, 20, 20, 20): 'scrfd_2_5g/conv57',   kps_32
+(1, 20, 20, 8): 'scrfd_2_5g/conv56',    bbox_32
+(1, 40, 40, 20): 'scrfd_2_5g/conv51'}   kps_16
+
+endnodes = [infer_results[layer_from_shape[1, 80, 80, 4]],  # stride 8 
+            infer_results[layer_from_shape[1, 80, 80, 1]],  # stride 8 
+            infer_results[layer_from_shape[1, 80, 80, 80]], # stride 8 
+            infer_results[layer_from_shape[1, 40, 40, 4]],  # stride 16
+            infer_results[layer_from_shape[1, 40, 40, 1]],  # stride 16
+            infer_results[layer_from_shape[1, 40, 40, 80]], # stride 16
+            infer_results[layer_from_shape[1, 20, 20, 4]],  # stride 32
+            infer_results[layer_from_shape[1, 20, 20, 1]],  # stride 32
+            infer_results[layer_from_shape[1, 20, 20, 80]]  # stride 32
+        ]
+
+endnodes = [sigmoid(output[layer_from_shape[1, 80, 80, 2]].reshape(1, -1, 1)),  # score 8
+            sigmoid(output[layer_from_shape[1, 40, 40, 2]].reshape(1, -1, 1)),  # score 16
+            sigmoid(output[layer_from_shape[1, 20, 20, 2]].reshape(1, -1, 1)),  # score 32
+            output[layer_from_shape[1, 80, 80, 8]].reshape(1, -1, 4),  # bbox 8
+            output[layer_from_shape[1, 40, 40, 8]].reshape(1, -1, 4),  # bbox 16
+            output[layer_from_shape[1, 20, 20, 8]].reshape(1, -1, 4),  # bbox 32
+            output[layer_from_shape[1, 80, 80, 20]].reshape(1, -1, 10), # kps 8
+            output[layer_from_shape[1, 40, 40, 20]].reshape(1, -1, 10), # kps 16
+            output[layer_from_shape[1, 20, 20, 20]].reshape(1, -1, 10)  # kps 32
+            ]
+"""
