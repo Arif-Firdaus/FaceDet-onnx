@@ -4,6 +4,8 @@ from functools import partial
 from loguru import logger
 import numpy as np
 
+def sigmoid(x):
+    return 1 / (1 + np.exp(-x))
 
 class HailoInference:
     def __init__(self, hef_path, output_type='FLOAT32'):
@@ -72,7 +74,7 @@ class HailoInference:
         """
         return self.input_vstream_info[0].shape  # Assumes that the model has one input
 
-    def run(self, input_data):
+    def run(self, input_data, multi=False):
         """
         Run inference on Hailo-8 device.
 
@@ -86,9 +88,27 @@ class HailoInference:
 
         with InferVStreams(self.network_group, self.input_vstreams_params, self.output_vstreams_params) as infer_pipeline:
             with self.network_group.activate(self.network_group_params):
-                output = infer_pipeline.infer(input_dict)[self.output_vstream_info[0].name]
+                # output = infer_pipeline.infer(input_dict)[self.output_vstream_info[0].name]
+                output = infer_pipeline.infer(input_dict)
+        # print(output.keys())
+        if multi:
+            layer_from_shape: dict = {output[key].shape:key for key in output.keys()}
+            # print(layer_from_shape)
+            endnodes = [sigmoid(output[layer_from_shape[1, 80, 80, 2]].reshape(1, -1, 1)),  # score 8
+                        sigmoid(output[layer_from_shape[1, 40, 40, 2]].reshape(1, -1, 1)),  # score 16
+                        sigmoid(output[layer_from_shape[1, 20, 20, 2]].reshape(1, -1, 1)),  # score 32
+                        output[layer_from_shape[1, 80, 80, 8]].reshape(1, -1, 4),  # bbox 8
+                        output[layer_from_shape[1, 40, 40, 8]].reshape(1, -1, 4),  # bbox 16
+                        output[layer_from_shape[1, 20, 20, 8]].reshape(1, -1, 4),  # bbox 32
+                        output[layer_from_shape[1, 80, 80, 20]].reshape(1, -1, 10), # kps 8
+                        output[layer_from_shape[1, 40, 40, 20]].reshape(1, -1, 10), # kps 16
+                        output[layer_from_shape[1, 20, 20, 20]].reshape(1, -1, 10)  # kps 32
+                        ]
+        else:
+            endnodes = output
+        # print(endnodes[0].shape, endnodes[3].shape, endnodes[6].shape)
 
-        return output
+        return endnodes
 
     def _prepare_input_data(self, input_data):
         """

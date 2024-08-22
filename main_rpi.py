@@ -11,15 +11,22 @@ from nets.nn import FaceDetector
 from picamera2 import Picamera2
 from libcamera import ColorSpace, controls
 
-# from multiprocessing import Process
-# from hailo_platform import (HEF, Device, VDevice, HailoStreamInterface, InferVStreams, ConfigureParams,
-#     InputVStreamParams, OutputVStreamParams, InputVStreams, OutputVStreams, FormatType)
-from utils import HailoAsyncInference
+from multiprocessing import Process, Queue
+from hailo_platform import (
+    HEF,
+    VDevice,
+    HailoStreamInterface,
+    InferVStreams,
+    ConfigureParams,
+    InputVStreamParams,
+    OutputVStreamParams,
+    InputVStreams,
+    OutputVStreams,
+    FormatType,
+    HailoSchedulingAlgorithm,
+)
 
 # warnings.filterwarnings("ignore")
-
-mean = [0.0, 0.0, 0.0]
-std = [1.0, 1.0, 1.0]
 
 
 def write_text_top_left(image, text, font_scale=1.5, color=(0, 255, 0), thickness=3):
@@ -88,6 +95,9 @@ def add_margin(img, bbox, height_margin=0.20, width_margin=0.10):
     new_right = min(img_width, right + margin_x)
     new_bottom = min(img_height, bottom + margin_y_bottom)
     # new_bottom = bottom
+    new_left, new_top, new_right, new_bottom = np.clip(
+        [new_left, new_top, new_right, new_bottom], 0, [896, 960, 896, 960]
+    )
 
     return int(new_left), int(new_top), int(new_right), int(new_bottom)
 
@@ -95,12 +105,23 @@ def add_margin(img, bbox, height_margin=0.20, width_margin=0.10):
 def preprocess_image(image, input_size=(640, 640)):
     image_resized = cv2.resize(image, input_size, interpolation=cv2.INTER_LINEAR)
     image_resized = cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB)
-    image_resized = (image_resized)
-    # image_resized = (image_resized / 255.0 - mean) / std
-    # image_resized = np.transpose(image_resized, (2, 0, 1))
+    image_resized = image_resized
     image_resized = np.expand_dims(image_resized, axis=0)
-    return image_resized.astype(np.float32)
+    return image_resized.astype(np.uint8)
 
+# Define the function to run inference on the model
+def infer(
+    network_group,
+    input_vstreams_params,
+    output_vstreams_params,
+    input_data,
+    infer_results_queue,
+):
+    with InferVStreams(
+        network_group, input_vstreams_params, output_vstreams_params
+    ) as infer_pipeline:
+        infer_results = infer_pipeline.infer(input_data)
+    infer_results_queue.put(infer_results)
 
 def main():
     cwd = os.getcwd()
@@ -114,21 +135,6 @@ def main():
 
     args = parser.parse_args()
     detector = FaceDetector(args.model)
-
-    # hef = HEF(cwd + "/models_hailo/age.hef")
-    # hef = HEF("/home/rpi5/tapway/FaceDet-onnx/models_hailo/age.hef")
-
-    # age_session = InferenceSession(
-    #     cwd + "/models_onnx/yolov8n_age_train.onnx",
-    #     providers=["CPUExecutionProvider"],
-    # )
-    # age_session.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-
-    # gender_session = InferenceSession(
-    #     cwd + "/models_onnx/yolov8n_gender_train.onnx",
-    #     providers=["CPUExecutionProvider"],
-    # )
-    # gender_session.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
     age_to_age = {
         0: 0,
@@ -167,24 +173,9 @@ def main():
     }
     pred_to_gender = {0: "F", 1: "M"}
 
-    # devices = Device.scan()
-
-    # with VDevice(device_ids=devices) as target:
-    #     configure_params = ConfigureParams.create_from_hef(hef, interface=HailoStreamInterface.PCIe)
-    #     network_group = target.configure(hef, configure_params)[0]
-    #     network_group_params = network_group.create_params()
-    #     input_vstream_info = hef.get_input_vstream_infos()[0]
-    #     output_vstream_info = hef.get_output_vstream_infos()[0]
-    #     input_vstreams_params = InputVStreamParams.make_from_network_group(network_group, quantized=False, format_type=FormatType.FLOAT32)
-    #     output_vstreams_params = OutputVStreamParams.make_from_network_group(network_group, quantized=False, format_type=FormatType.FLOAT32)
-    #     height, width, channels = hef.get_input_vstream_infos()[0].shape
-    hailo_inference = HailoAsyncInference(cwd + "/models_hailo/age.hef", 1)
-    hailo_inference_face = HailoAsyncInference(cwd + "/models_hailo/scrfd_2.5g.hef", 1)
-    height, width, _ = hailo_inference.get_input_shape()
-
     picam2 = Picamera2()
     picam2.set_controls(
-        {"NoiseReductionMode": controls.draft.NoiseReductionModeEnum.HighQuality}
+        {"NoiseReductionMode": controls.draft.NoiseReductionModeEnum.Fast}
     )
     mode = picam2.sensor_modes[1]
     resolution = 320 * 3
@@ -206,55 +197,153 @@ def main():
 
     start_time = time.time()
     num_iterations = 0
-    while True:
-        frame = picam2.capture_array("main")
-        frame = cv2.cvtColor(frame, cv2.COLOR_YUV420p2BGR)
-        frame = cv2.flip(frame, 1)
+    # hailo_inference_face = HailoInference(cwd + "/models_hailo/scrfd_2.5g.hef")
+    # Loading compiled HEFs:
+    first_hef_path = "/home/rpi5/tapway/FaceDet-onnx/models_hailo/scrfd_2.5g.hef"
+    second_hef_path = "/home/rpi5/tapway/FaceDet-onnx/models_hailo/age.hef"
+    # third_hef_path = ''
+    first_hef = HEF(first_hef_path)
+    second_hef = HEF(second_hef_path)
+    hefs = [first_hef, second_hef]
 
-        boxes, points = detector.detect(frame, score_thresh=0.5, input_size=(640, 640), hailo_inference_face)
-        for box in boxes:
-            x1, y1, x2, y2, score = box
-            x1, y1, x2, y2 = add_margin(frame, (x1, y1, x2, y2))
-            cropped_image = frame[y1:y2, x1:x2]
-            processed_image = preprocess_image(cropped_image)
-            # with InferVStreams(network_group, input_vstreams_params, output_vstreams_params) as infer_pipeline:
-            #     input_data = {input_vstream_info.name: processed_image}    
-            #     with network_group.activate(network_group_params):
-            #         res_age = infer_pipeline.infer(input_data)
+    # Creating the VDevice target with scheduler enabled
+    params = VDevice.create_params()
+    params.scheduling_algorithm = HailoSchedulingAlgorithm.ROUND_ROBIN
+    params.multi_process_service = True
+    with VDevice(params) as target:
+        result_queue = Queue()
 
-            res_age = hailo_inference.run(processed_image)
+        #! Face
+        hef = hefs[0]
+        configure_params = ConfigureParams.create_from_hef(
+            hef=hef, interface=HailoStreamInterface.PCIe
+        )
+        network_groups = target.configure(hef, configure_params)
+        face_network_group = network_groups[0]
 
-            # res_age = age_session.run(None, {"images": processed_image})
-            # res_gender = gender_session.run(None, {"images": processed_image})
-            # print(res_age["age/softmax1"])
-            age = pred_to_age[age_to_age[res_age["age/softmax1"][0].argmax()]]
-            # gender = pred_to_gender[res_gender[0].argmax()]
-            cv2.putText(
+        # Create input and output virtual streams params
+        input_format_type = hef.get_input_vstream_infos()[0].format.type
+        face_input_vstreams_params = InputVStreamParams.make_from_network_group(
+            face_network_group, format_type=input_format_type
+        )
+        face_output_vstreams_params = OutputVStreamParams.make_from_network_group(
+            face_network_group, format_type=getattr(FormatType, "FLOAT32")
+        )
+
+        # Define dataset params
+        face_input_vstream_info = hef.get_input_vstream_infos()[0]
+
+        #! Age
+        hef = hefs[1]
+        configure_params = ConfigureParams.create_from_hef(
+            hef=hef, interface=HailoStreamInterface.PCIe
+        )
+        network_groups = target.configure(hef, configure_params)
+        age_network_group = network_groups[0]
+
+        # Create input and output virtual streams params
+        input_format_type = hef.get_input_vstream_infos()[0].format.type
+        age_input_vstreams_params = InputVStreamParams.make_from_network_group(
+            age_network_group, format_type=input_format_type
+        )
+        age_output_vstreams_params = OutputVStreamParams.make_from_network_group(
+            age_network_group, format_type=getattr(FormatType, "FLOAT32")
+        )
+
+        # Define dataset params
+        age_input_vstream_info = hef.get_input_vstream_infos()[0]
+
+        #! Gender
+        # hef = hefs[2]
+        # configure_params = ConfigureParams.create_from_hef(hef=hef, interface=HailoStreamInterface.PCIe)
+        # network_groups = target.configure(hef, configure_params)
+        # gender_network_group = network_groups[0]
+
+        # # Create input and output virtual streams params
+        # input_format_type = hef.get_input_vstream_infos()[0].format.type
+        # gender_input_vstreams_params = InputVStreamParams.make_from_network_group(gender_network_group, format_type=input_format_type)
+        # gender_output_vstreams_params = OutputVStreamParams.make_from_network_group(gender_network_group, format_type=getattr(FormatType, 'FLOAT32'))
+
+        # # Define dataset params
+        # gender_input_vstream_info = hef.get_input_vstream_infos()[0]
+
+        while True:
+            frame = picam2.capture_array("main")
+            frame = cv2.cvtColor(frame, cv2.COLOR_YUV420p2BGR)
+            frame = cv2.flip(frame, 1)
+
+            boxes, points = detector.detect(
+                face_network_group,
+                face_input_vstreams_params,
+                face_output_vstreams_params,
+                face_input_vstream_info,
+                result_queue,
                 frame,
-                f"{age}",
-                # f"{gender}:{age}",
-                (x1, int(y1 * 0.99)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                2,
-                (0, 255, 0),
-                2,
-                cv2.LINE_AA,
+                score_thresh=0.55,
+                input_size=(640, 640),
+                hailo_inference_face=infer,
             )
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        # if points is not None:
-        #     for point in points:
-        #         for kp in point:
-        #             kp = kp.astype(np.int32)
-        #             cv2.circle(frame, tuple(kp), 1, (0, 255, 0), 2)
-        iteration_time = time.time() - start_time
-        num_iterations += 1
-        fps = num_iterations / iteration_time
-        frame = write_text_top_left(frame, f"{fps:.2f} FPS")
-        cv2.imshow("Webcam", cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            for box in boxes:
+                # break
+                x1, y1, x2, y2, score = box
+                x1, y1, x2, y2 = add_margin(frame, (x1, y1, x2, y2))
+                # print(x1, y1, x2, y2)
+                cropped_image = frame[y1:y2, x1:x2]
+                if cropped_image.shape[0] == 0 or cropped_image.shape[1] == 0:
+                    continue
+                # print("crop", cropped_image.shape)
+                processed_image = preprocess_image(cropped_image)
+                # print(processed_image.shape)
 
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
+                input_data = {
+                    age_input_vstream_info.name: processed_image
+                }
+                # Create infer process
+                infer_process = Process(
+                    target=infer,
+                    args=(
+                        age_network_group,
+                        age_input_vstreams_params,
+                        age_output_vstreams_params,
+                        input_data,
+                        result_queue,
+                    ),
+                )
+                infer_process.start()
+                res_age = result_queue.get()
+                infer_process.join()
+                # print("res_age", res_age)
 
+                age = pred_to_age[age_to_age[res_age["age/softmax1"][0].argmax()]]
+                # print("age", age)
+
+                # gender = pred_to_gender[res_gender[0].argmax()]
+                cv2.putText(
+                    frame,
+                    f"{age}",
+                    # f"{gender}:{age}",
+                    (x1, int(y1 * 0.99)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    2,
+                    (0, 255, 0),
+                    2,
+                    cv2.LINE_AA,
+                )
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            # if points is not None:
+            #     for point in points:
+            #         for kp in point:
+            #             kp = kp.astype(np.int32)
+            #             cv2.circle(frame, tuple(kp), 1, (0, 255, 0), 2)
+            iteration_time = time.time() - start_time
+            num_iterations += 1
+            fps = num_iterations / iteration_time
+            frame = write_text_top_left(frame, f"{fps:.2f} FPS")
+            # print("FPS", fps)
+            cv2.imshow("Webcam", cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
     end_time = time.time()
     time_elapsed = end_time - start_time
     iterations_per_second = num_iterations / time_elapsed
@@ -262,7 +351,6 @@ def main():
     print(f"Total time elapsed: {time_elapsed} seconds")
     print(f"Iterations per second: {iterations_per_second}")
     cv2.destroyAllWindows()
-    hailo_inference.release_device()
 
 
 if __name__ == "__main__":
