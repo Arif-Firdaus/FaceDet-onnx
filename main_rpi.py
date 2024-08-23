@@ -87,7 +87,8 @@ def add_margin(img, bbox, height_margin=0.20, width_margin=0.10):
     new_bottom = min(img_height, bottom + margin_y_bottom)
     # new_bottom = bottom
     new_left, new_top, new_right, new_bottom = np.clip(
-        [new_left, new_top, new_right, new_bottom], 0, [896, 960, 896, 960]
+        [new_left, new_top, new_right, new_bottom], 0, [1080, 1920, 1080, 1920]
+        # [new_left, new_top, new_right, new_bottom], 0, [896, 960, 896, 960]
     )
 
     return int(new_left), int(new_top), int(new_right), int(new_bottom)
@@ -116,6 +117,7 @@ def infer(
 
 
 def main():
+    video_testing = True
     cwd = os.getcwd()
     detector = FaceDetector()
 
@@ -262,10 +264,25 @@ def main():
         # Define dataset params
         gender_input_vstream_info = hef.get_input_vstream_infos()[0]
 
+        if video_testing:
+            fourcc = cv2.VideoWriter_fourcc(*'MP4V')
+            out = cv2.VideoWriter('demo/test_video_hailo_infer.mp4', fourcc, 15.0, (1920, 1080))
+
+            video_file = 'demo/test_video.mp4'  # Replace with your video file name
+            cap = cv2.VideoCapture(video_file)
+            if not cap.isOpened():
+                print("Error: Could not open webcam.")
+                return
+
         while True:
-            frame = picam2.capture_array("main")
-            frame = cv2.cvtColor(frame, cv2.COLOR_YUV420p2RGB)
-            frame = cv2.flip(frame, 1)
+            if not video_testing:
+                frame = picam2.capture_array("main")
+                frame = cv2.cvtColor(frame, cv2.COLOR_YUV420p2RGB)
+                frame = cv2.flip(frame, 1)
+            else:
+                ret, frame = cap.read()
+                if not ret:
+                    break
 
             boxes, points = detector.detect(
                 face_network_group,
@@ -352,6 +369,8 @@ def main():
             num_iterations += 1
             fps = num_iterations / iteration_time
             frame = write_text_top_left(frame, f"{fps:.2f} FPS")
+            if video_testing:
+                out.write(frame)
             cv2.imshow("Webcam", frame)
 
             if cv2.waitKey(1) & 0xFF == ord("q"):
@@ -362,6 +381,7 @@ def main():
 
     print(f"Total time elapsed: {time_elapsed} seconds")
     print(f"Iterations per second: {iterations_per_second}")
+    out.release()
     cv2.destroyAllWindows()
 
 
