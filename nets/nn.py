@@ -62,17 +62,24 @@ def distance2kps(points, distance, max_shape=None):
 class FaceDetector:
     def __init__(self, onnx_path=None, session=None):
         self.session = session
-
-        self.batched = False
         if onnx_path:
             from onnxruntime import InferenceSession
             import onnxruntime as ort
             self.session = InferenceSession(
-                onnx_path, providers=["CPUExecutionProvider"]
+                onnx_path, providers=["CoreMLExecutionProvider", "CPUExecutionProvider"]
             )
             self.session.graph_optimization_level = (
                 ort.GraphOptimizationLevel.ORT_ENABLE_ALL
             )
+            input_cfg = self.session.get_inputs()[0]
+            input_shape = input_cfg.shape
+            input_name = input_cfg.name
+            outputs = self.session.get_outputs()
+            output_names = []
+            for output in outputs:
+                output_names.append(output.name)
+            self.input_name = input_name
+            self.output_names = output_names
 
         self.nms_thresh = 0.4
         self.center_cache = {}
@@ -92,37 +99,37 @@ class FaceDetector:
         scores_list = []
         bboxes_list = []
         points_list = []
-        # blob = cv2.cvtColor(x, cv2.COLOR_BGR2RGB)
-        blob = np.expand_dims(x, axis=0)
 
-        input_data = {input_vstream_info.name: blob}
-        # Create infer process
-        infer_process = Process(target=hailo_inference_face, args=(network_group, input_vstreams_params, output_vstreams_params, input_data, result_queue, "face"))
-        infer_process.start()
-        model, output = result_queue.get()
-        infer_process.join()
-        
+        if not self.session:
+            blob = np.expand_dims(x, axis=0)
+            input_data = {input_vstream_info.name: blob}
+            # Create infer process
+            infer_process = Process(target=hailo_inference_face, args=(network_group, input_vstreams_params, output_vstreams_params, input_data, result_queue, "face"))
+            infer_process.start()
+            _, output = result_queue.get()
+            infer_process.join()
 
-        layer_from_shape: dict = {output[key].shape:key for key in output.keys()}
-        net_outs = [sigmoid(output[layer_from_shape[1, 80, 80, 2]].reshape(1, -1, 1)),  # score 8
-                    sigmoid(output[layer_from_shape[1, 40, 40, 2]].reshape(1, -1, 1)),  # score 16
-                    sigmoid(output[layer_from_shape[1, 20, 20, 2]].reshape(1, -1, 1)),  # score 32
-                    output[layer_from_shape[1, 80, 80, 8]].reshape(1, -1, 4),           # bbox 8
-                    output[layer_from_shape[1, 40, 40, 8]].reshape(1, -1, 4),           # bbox 16
-                    output[layer_from_shape[1, 20, 20, 8]].reshape(1, -1, 4),           # bbox 32
-                    output[layer_from_shape[1, 80, 80, 20]].reshape(1, -1, 10),         # kps 8
-                    output[layer_from_shape[1, 40, 40, 20]].reshape(1, -1, 10),         # kps 16
-                    output[layer_from_shape[1, 20, 20, 20]].reshape(1, -1, 10)          # kps 32
-                    ]
-        
-        # blob = blob.transpose((0, 3, 1, 2))
-
+            layer_from_shape: dict = {output[key].shape:key for key in output.keys()}
+            net_outs = [sigmoid(output[layer_from_shape[1, 80, 80, 2]].reshape(1, -1, 1)),  # score 8
+                        sigmoid(output[layer_from_shape[1, 40, 40, 2]].reshape(1, -1, 1)),  # score 16
+                        sigmoid(output[layer_from_shape[1, 20, 20, 2]].reshape(1, -1, 1)),  # score 32
+                        output[layer_from_shape[1, 80, 80, 8]].reshape(1, -1, 4),           # bbox 8
+                        output[layer_from_shape[1, 40, 40, 8]].reshape(1, -1, 4),           # bbox 16
+                        output[layer_from_shape[1, 20, 20, 8]].reshape(1, -1, 4),           # bbox 32
+                        output[layer_from_shape[1, 80, 80, 20]].reshape(1, -1, 10),         # kps 8
+                        output[layer_from_shape[1, 40, 40, 20]].reshape(1, -1, 10),         # kps 16
+                        output[layer_from_shape[1, 20, 20, 20]].reshape(1, -1, 10)          # kps 32
+                        ]
+        else:
+            blob = cv2.cvtColor(x, cv2.COLOR_BGR2RGB)
+            blob = np.expand_dims(blob, axis=0)
+            net_outs = self.session.run(self.output_names, {self.input_name: blob.astype(np.float32).transpose(0, 3, 1, 2)/255.0})
+            
         input_height = blob.shape[1]
         input_width = blob.shape[2]
         fmc = self.fmc
         for idx, stride in enumerate(self._feat_stride_fpn):
             if self.batched:
-                # print(net_outs[0])
                 scores = net_outs[idx][0]
                 boxes = net_outs[idx + fmc][0]
                 boxes = boxes * stride
@@ -156,7 +163,6 @@ class FaceDetector:
                     self.center_cache[key] = anchor_centers
 
             pos_indices = np.where(scores >= score_thresh)[0]
-            # print(boxes.shape, anchor_centers.shape)
             bboxes = distance2box(anchor_centers, boxes)
             pos_scores = scores[pos_indices]
             pos_bboxes = bboxes[pos_indices]
@@ -169,8 +175,8 @@ class FaceDetector:
         return scores_list, bboxes_list, points_list
 
     def detect(
-        self, network_group, input_vstreams_params, output_vstreams_params, input_vstream_info, result_queue, 
-        img, score_thresh=0.5, input_size=None, max_num=0, metric="default", hailo_inference_face=None
+        self, network_group=None, input_vstreams_params=None, output_vstreams_params=None, input_vstream_info=None, result_queue=None, 
+        img=None, score_thresh=0.5, input_size=None, max_num=0, metric="default", hailo_inference_face=None
     ):
         assert input_size is not None or self.input_size is not None
         input_size = self.input_size if input_size is None else input_size

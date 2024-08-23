@@ -1,6 +1,5 @@
 import time
 import os
-import warnings
 from argparse import ArgumentParser
 
 import cv2
@@ -9,13 +8,6 @@ import numpy as np
 from nets.nn import FaceDetector
 from onnxruntime import InferenceSession
 import onnxruntime as ort
-
-warnings.filterwarnings("ignore")
-
-# mean = ([0.48145466, 0.4578275, 0.40821073],)
-# std = [0.26862954, 0.26130258, 0.27577711]
-mean = [0.0, 0.0, 0.0]
-std = [1.0, 1.0, 1.0]
 
 
 def write_text_top_left(image, text, font_scale=1.5, color=(0, 255, 0), thickness=3):
@@ -64,7 +56,7 @@ def write_text_top_left(image, text, font_scale=1.5, color=(0, 255, 0), thicknes
     return image
 
 
-def add_margin(img, bbox, height_margin=0.21, width_margin=0.11):
+def add_margin(img, bbox, height_margin=0.2, width_margin=0.1):
     img_width, img_height = img.shape[1], img.shape[0]
     # Unpack the bounding box coordinates
     left, top, right, bottom = bbox
@@ -91,14 +83,10 @@ def add_margin(img, bbox, height_margin=0.21, width_margin=0.11):
 def preprocess_image(image, input_size=(640, 640)):
     image_resized = cv2.resize(image, input_size, interpolation=cv2.INTER_LINEAR)
     image_resized = cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB)
-    image_resized = (image_resized / 255.0 - mean) / std
+    image_resized = image_resized / 255.0
     image_resized = np.transpose(image_resized, (2, 0, 1))
     image_resized = np.expand_dims(image_resized, axis=0)
     return image_resized.astype(np.float32)
-
-
-def sigmoid(x):
-    return 1 / (1 + np.exp(-x))
 
 
 def main():
@@ -174,7 +162,7 @@ def main():
             break
         frame = cv2.flip(frame, 1)
 
-        boxes, points = detector.detect(frame, score_thresh=0.5, input_size=(640, 640))
+        boxes, points = detector.detect(img=frame, score_thresh=0.5, input_size=(640, 640))
         for box in boxes:
             x1, y1, x2, y2, score = box
             x1, y1, x2, y2 = add_margin(frame, (x1, y1, x2, y2))
@@ -184,13 +172,9 @@ def main():
             res_gender = gender_session.run(None, {"images": processed_image})
             age = pred_to_age[age_to_age[res_age[0].argmax()]]
             gender = pred_to_gender[res_gender[0].argmax()]
-            # print(sigmoid(res[1][0]), np.rint(sigmoid(res[1][0]))[0])
-            # gender = pred_to_gender[np.rint(sigmoid(res_gender[1][0]))[0]]
             cv2.putText(
                 frame,
-                # f"{age}",
                 f"{gender}:{age}",
-                # abc defh ijkl
                 (x1, int(y1 * 0.99)),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 2,

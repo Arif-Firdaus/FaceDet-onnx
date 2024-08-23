@@ -1,7 +1,5 @@
 import time
 import os
-import warnings
-from argparse import ArgumentParser
 
 import cv2
 import numpy as np
@@ -20,13 +18,9 @@ from hailo_platform import (
     ConfigureParams,
     InputVStreamParams,
     OutputVStreamParams,
-    InputVStreams,
-    OutputVStreams,
     FormatType,
     HailoSchedulingAlgorithm,
 )
-
-# warnings.filterwarnings("ignore")
 
 
 def write_text_top_left(image, text, font_scale=1.5, color=(0, 255, 0), thickness=3):
@@ -104,10 +98,9 @@ def add_margin(img, bbox, height_margin=0.20, width_margin=0.10):
 
 def preprocess_image(image, input_size=(640, 640)):
     image_resized = cv2.resize(image, input_size, interpolation=cv2.INTER_LINEAR)
-    # image_resized = cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB)
-    image_resized = image_resized
     image_resized = np.expand_dims(image_resized, axis=0)
     return image_resized.astype(np.uint8)
+
 
 # Define the function to run inference on the model
 def infer(
@@ -116,13 +109,14 @@ def infer(
     output_vstreams_params,
     input_data,
     infer_results_queue,
-    queue_name: str
+    queue_name: str,
 ):
     with InferVStreams(
         network_group, input_vstreams_params, output_vstreams_params
     ) as infer_pipeline:
         infer_results = infer_pipeline.infer(input_data)
     infer_results_queue.put((queue_name, infer_results))
+
 
 def main():
     cwd = os.getcwd()
@@ -163,23 +157,27 @@ def main():
         13: "65-69",
         14: ">70",
     }
+    
     pred_to_gender = {0: "F", 1: "M"}
 
     picam2 = Picamera2()
     picam2.set_controls(
-        {"NoiseReductionMode": controls.draft.NoiseReductionModeEnum.Fast,  #? HighQuality, Fast
-         'HdrMode': controls.HdrModeEnum.Night}                             #? Night, SingleExposure
+        {
+            "NoiseReductionMode": controls.draft.NoiseReductionModeEnum.Fast,  # ? HighQuality, Fast
+            "HdrMode": controls.HdrModeEnum.Night,                             # ? Night, SingleExposure
+        }  
     )
     mode = picam2.sensor_modes[0]
-    # resolution = 320 * 3
+    camera_res_height = 960
+    camera_res_width = 1536
     camera_config = picam2.create_video_configuration(
         colour_space=ColorSpace.Rec709(),
         queue=True,
         sensor={"output_size": mode["size"], "bit_depth": mode["bit_depth"]},
-        main={"size": (1536, 960), "format": "YUV420"},
+        main={"size": (camera_res_width, camera_res_height), "format": "YUV420"},
         buffer_count=9,
     )
-    #* Gstreamer
+    # * Gstreamer
     # ? FPS
     # ? Sensor modes
     # ? noise reduction
@@ -194,7 +192,7 @@ def main():
     # Loading compiled HEFs:
     first_hef_path = "/home/rpi5/tapway/FaceDet-onnx/models_hailo/scrfd_2.5g.hef"
     second_hef_path = "/home/rpi5/tapway/FaceDet-onnx/models_hailo/age_O.hef"
-    third_hef_path = '/home/rpi5/tapway/FaceDet-onnx/models_hailo/gender.hef'
+    third_hef_path = "/home/rpi5/tapway/FaceDet-onnx/models_hailo/gender.hef"
     first_hef = HEF(first_hef_path)
     second_hef = HEF(second_hef_path)
     third_hef = HEF(third_hef_path)
@@ -249,14 +247,20 @@ def main():
 
         #! Gender
         hef = hefs[2]
-        configure_params = ConfigureParams.create_from_hef(hef=hef, interface=HailoStreamInterface.PCIe)
+        configure_params = ConfigureParams.create_from_hef(
+            hef=hef, interface=HailoStreamInterface.PCIe
+        )
         network_groups = target.configure(hef, configure_params)
         gender_network_group = network_groups[0]
 
         # Create input and output virtual streams params
         input_format_type = hef.get_input_vstream_infos()[0].format.type
-        gender_input_vstreams_params = InputVStreamParams.make_from_network_group(gender_network_group, format_type=input_format_type)
-        gender_output_vstreams_params = OutputVStreamParams.make_from_network_group(gender_network_group, format_type=getattr(FormatType, 'FLOAT32'))
+        gender_input_vstreams_params = InputVStreamParams.make_from_network_group(
+            gender_network_group, format_type=input_format_type
+        )
+        gender_output_vstreams_params = OutputVStreamParams.make_from_network_group(
+            gender_network_group, format_type=getattr(FormatType, "FLOAT32")
+        )
 
         # Define dataset params
         gender_input_vstream_info = hef.get_input_vstream_infos()[0]
@@ -287,9 +291,7 @@ def main():
                     continue
                 processed_image = preprocess_image(cropped_image)
 
-                input_data = {
-                    age_input_vstream_info.name: processed_image
-                }
+                input_data = {age_input_vstream_info.name: processed_image}
                 # Create infer process
                 age_infer_process = Process(
                     target=infer,
@@ -299,14 +301,12 @@ def main():
                         age_output_vstreams_params,
                         input_data,
                         result_queue,
-                        "age"
+                        "age",
                     ),
                 )
                 age_infer_process.start()
 
-                input_data = {
-                    gender_input_vstream_info.name: processed_image
-                }
+                input_data = {gender_input_vstream_info.name: processed_image}
                 # Create infer process
                 gender_infer_process = Process(
                     target=infer,
@@ -316,7 +316,7 @@ def main():
                         gender_output_vstreams_params,
                         input_data,
                         result_queue,
-                        "gender"
+                        "gender",
                     ),
                 )
                 gender_infer_process.start()
