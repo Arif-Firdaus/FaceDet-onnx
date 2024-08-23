@@ -1,9 +1,8 @@
 import time
 import os
-from argparse import ArgumentParser
-
 import cv2
 import numpy as np
+from argparse import ArgumentParser
 
 from nets.nn import FaceDetector
 from onnxruntime import InferenceSession
@@ -90,6 +89,7 @@ def preprocess_image(image, input_size=(640, 640)):
 
 
 def main():
+    write_video = True
     cwd = os.getcwd()
     parser = ArgumentParser()
     parser.add_argument(
@@ -151,6 +151,9 @@ def main():
     pred_to_gender = {0: "F", 1: "M"}
 
     cap = cv2.VideoCapture(0)
+    fourcc = cv2.VideoWriter_fourcc(*'AVC1')
+    out = cv2.VideoWriter('demo/test_video.mp4', fourcc, 15.0, (1920, 1080))
+    out_infer = cv2.VideoWriter('demo/test_video_onnx_infer.mp4', fourcc, 15.0, (1920, 1080))
     if not cap.isOpened():
         print("Error: Could not open webcam.")
         return
@@ -161,6 +164,8 @@ def main():
         if not ret:
             break
         frame = cv2.flip(frame, 1)
+        if write_video:
+            out.write(frame)
 
         boxes, points = detector.detect(img=frame, score_thresh=0.5, input_size=(640, 640))
         for box in boxes:
@@ -192,6 +197,8 @@ def main():
         num_iterations += 1
         fps = num_iterations / iteration_time
         frame = write_text_top_left(frame, f"{fps:.2f} FPS")
+        if write_video:
+            out_infer.write(frame)
         cv2.imshow("Webcam", frame)
 
         if cv2.waitKey(1) & 0xFF == ord("q"):
@@ -204,6 +211,8 @@ def main():
     print(f"Total time elapsed: {time_elapsed} seconds")
     print(f"Iterations per second: {iterations_per_second}")
     cap.release()
+    out.release()
+    out_infer.release()
     cv2.destroyAllWindows()
 
 

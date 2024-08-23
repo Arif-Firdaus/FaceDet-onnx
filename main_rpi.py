@@ -1,15 +1,12 @@
 import time
 import os
-
 import cv2
 import numpy as np
+from multiprocessing import Process, Queue
 
 from nets.nn import FaceDetector
-
 from picamera2 import Picamera2
 from libcamera import ColorSpace, controls
-
-from multiprocessing import Process, Queue
 from hailo_platform import (
     HEF,
     VDevice,
@@ -157,7 +154,7 @@ def main():
         13: "65-69",
         14: ">70",
     }
-    
+
     pred_to_gender = {0: "F", 1: "M"}
 
     picam2 = Picamera2()
