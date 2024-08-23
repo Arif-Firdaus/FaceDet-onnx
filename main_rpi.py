@@ -104,7 +104,7 @@ def add_margin(img, bbox, height_margin=0.20, width_margin=0.10):
 
 def preprocess_image(image, input_size=(640, 640)):
     image_resized = cv2.resize(image, input_size, interpolation=cv2.INTER_LINEAR)
-    image_resized = cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB)
+    # image_resized = cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB)
     image_resized = image_resized
     image_resized = np.expand_dims(image_resized, axis=0)
     return image_resized.astype(np.uint8)
@@ -116,25 +116,17 @@ def infer(
     output_vstreams_params,
     input_data,
     infer_results_queue,
+    queue_name: str
 ):
     with InferVStreams(
         network_group, input_vstreams_params, output_vstreams_params
     ) as infer_pipeline:
         infer_results = infer_pipeline.infer(input_data)
-    infer_results_queue.put(infer_results)
+    infer_results_queue.put((queue_name, infer_results))
 
 def main():
     cwd = os.getcwd()
-    parser = ArgumentParser()
-    parser.add_argument(
-        "--model",
-        type=str,
-        default="/home/rpi5/tapway/FaceDet-onnx/models_hailo/scrfd_2.5g.hef",
-        help="model file path",
-    )
-
-    args = parser.parse_args()
-    detector = FaceDetector(args.model)
+    detector = FaceDetector()
 
     age_to_age = {
         0: 0,
@@ -175,17 +167,19 @@ def main():
 
     picam2 = Picamera2()
     picam2.set_controls(
-        {"NoiseReductionMode": controls.draft.NoiseReductionModeEnum.Fast}
+        {"NoiseReductionMode": controls.draft.NoiseReductionModeEnum.Fast,  #? HighQuality, Fast
+         'HdrMode': controls.HdrModeEnum.Night}                             #? Night, SingleExposure
     )
-    mode = picam2.sensor_modes[1]
-    resolution = 320 * 3
+    mode = picam2.sensor_modes[0]
+    # resolution = 320 * 3
     camera_config = picam2.create_video_configuration(
         colour_space=ColorSpace.Rec709(),
         queue=True,
         sensor={"output_size": mode["size"], "bit_depth": mode["bit_depth"]},
-        main={"size": (resolution, resolution), "format": "YUV420"},
-        buffer_count=3,
+        main={"size": (1536, 960), "format": "YUV420"},
+        buffer_count=9,
     )
+    #* Gstreamer
     # ? FPS
     # ? Sensor modes
     # ? noise reduction
@@ -197,14 +191,14 @@ def main():
 
     start_time = time.time()
     num_iterations = 0
-    # hailo_inference_face = HailoInference(cwd + "/models_hailo/scrfd_2.5g.hef")
     # Loading compiled HEFs:
     first_hef_path = "/home/rpi5/tapway/FaceDet-onnx/models_hailo/scrfd_2.5g.hef"
-    second_hef_path = "/home/rpi5/tapway/FaceDet-onnx/models_hailo/age.hef"
-    # third_hef_path = ''
+    second_hef_path = "/home/rpi5/tapway/FaceDet-onnx/models_hailo/age_O.hef"
+    third_hef_path = '/home/rpi5/tapway/FaceDet-onnx/models_hailo/gender.hef'
     first_hef = HEF(first_hef_path)
     second_hef = HEF(second_hef_path)
-    hefs = [first_hef, second_hef]
+    third_hef = HEF(third_hef_path)
+    hefs = [first_hef, second_hef, third_hef]
 
     # Creating the VDevice target with scheduler enabled
     params = VDevice.create_params()
@@ -254,22 +248,22 @@ def main():
         age_input_vstream_info = hef.get_input_vstream_infos()[0]
 
         #! Gender
-        # hef = hefs[2]
-        # configure_params = ConfigureParams.create_from_hef(hef=hef, interface=HailoStreamInterface.PCIe)
-        # network_groups = target.configure(hef, configure_params)
-        # gender_network_group = network_groups[0]
+        hef = hefs[2]
+        configure_params = ConfigureParams.create_from_hef(hef=hef, interface=HailoStreamInterface.PCIe)
+        network_groups = target.configure(hef, configure_params)
+        gender_network_group = network_groups[0]
 
-        # # Create input and output virtual streams params
-        # input_format_type = hef.get_input_vstream_infos()[0].format.type
-        # gender_input_vstreams_params = InputVStreamParams.make_from_network_group(gender_network_group, format_type=input_format_type)
-        # gender_output_vstreams_params = OutputVStreamParams.make_from_network_group(gender_network_group, format_type=getattr(FormatType, 'FLOAT32'))
+        # Create input and output virtual streams params
+        input_format_type = hef.get_input_vstream_infos()[0].format.type
+        gender_input_vstreams_params = InputVStreamParams.make_from_network_group(gender_network_group, format_type=input_format_type)
+        gender_output_vstreams_params = OutputVStreamParams.make_from_network_group(gender_network_group, format_type=getattr(FormatType, 'FLOAT32'))
 
-        # # Define dataset params
-        # gender_input_vstream_info = hef.get_input_vstream_infos()[0]
+        # Define dataset params
+        gender_input_vstream_info = hef.get_input_vstream_infos()[0]
 
         while True:
             frame = picam2.capture_array("main")
-            frame = cv2.cvtColor(frame, cv2.COLOR_YUV420p2BGR)
+            frame = cv2.cvtColor(frame, cv2.COLOR_YUV420p2RGB)
             frame = cv2.flip(frame, 1)
 
             boxes, points = detector.detect(
@@ -279,27 +273,25 @@ def main():
                 face_input_vstream_info,
                 result_queue,
                 frame,
-                score_thresh=0.55,
+                score_thresh=0.62,
                 input_size=(640, 640),
                 hailo_inference_face=infer,
             )
+            # break
             for box in boxes:
                 # break
                 x1, y1, x2, y2, score = box
                 x1, y1, x2, y2 = add_margin(frame, (x1, y1, x2, y2))
-                # print(x1, y1, x2, y2)
                 cropped_image = frame[y1:y2, x1:x2]
                 if cropped_image.shape[0] == 0 or cropped_image.shape[1] == 0:
                     continue
-                # print("crop", cropped_image.shape)
                 processed_image = preprocess_image(cropped_image)
-                # print(processed_image.shape)
 
                 input_data = {
                     age_input_vstream_info.name: processed_image
                 }
                 # Create infer process
-                infer_process = Process(
+                age_infer_process = Process(
                     target=infer,
                     args=(
                         age_network_group,
@@ -307,21 +299,45 @@ def main():
                         age_output_vstreams_params,
                         input_data,
                         result_queue,
+                        "age"
                     ),
                 )
-                infer_process.start()
-                res_age = result_queue.get()
-                infer_process.join()
-                # print("res_age", res_age)
+                age_infer_process.start()
+
+                input_data = {
+                    gender_input_vstream_info.name: processed_image
+                }
+                # Create infer process
+                gender_infer_process = Process(
+                    target=infer,
+                    args=(
+                        gender_network_group,
+                        gender_input_vstreams_params,
+                        gender_output_vstreams_params,
+                        input_data,
+                        result_queue,
+                        "gender"
+                    ),
+                )
+                gender_infer_process.start()
+
+                res_age, res_gender = None, None
+                while not res_age or not res_gender:
+                    model, res = result_queue.get()
+                    if model == "age":
+                        res_age = res
+                        age_infer_process.join()
+                    else:
+                        res_gender = res
+                        gender_infer_process.join()
 
                 age = pred_to_age[age_to_age[res_age["age/softmax1"][0].argmax()]]
-                # print("age", age)
+                gender = pred_to_gender[res_gender["gender/softmax1"][0].argmax()]
 
-                # gender = pred_to_gender[res_gender[0].argmax()]
                 cv2.putText(
                     frame,
-                    f"{age}",
-                    # f"{gender}:{age}",
+                    # f"{age}",
+                    f"{gender}:{age}",
                     (x1, int(y1 * 0.99)),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     2,
@@ -339,8 +355,7 @@ def main():
             num_iterations += 1
             fps = num_iterations / iteration_time
             frame = write_text_top_left(frame, f"{fps:.2f} FPS")
-            # print("FPS", fps)
-            cv2.imshow("Webcam", cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            cv2.imshow("Webcam", frame)
 
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break

@@ -2,10 +2,7 @@ import os
 import cv2
 import numpy as np
 from multiprocessing import Process
-# from onnxruntime import InferenceSession
-# import onnxruntime as ort
-# from hailo_platform import (HEF, Device, VDevice, HailoStreamInterface, InferVStreams, ConfigureParams,
-#     InputVStreamParams, OutputVStreamParams, InputVStreams, OutputVStreams, FormatType)
+
 
 cwd = os.getcwd()
 
@@ -67,95 +64,61 @@ class FaceDetector:
         self.session = session
 
         self.batched = False
-        if self.session is None:
-            assert onnx_path is not None
-            assert os.path.exists(onnx_path)
-            # self.session = InferenceSession(
-            #     "/home/rpi5/tapway/FaceDet-onnx/models_onnx/scrfd_2.5g_bn.onnx", providers=["CPUExecutionProvider"]
-            # )
-            # self.session.graph_optimization_level = (
-            #     ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-            # )
+        if onnx_path:
+            from onnxruntime import InferenceSession
+            import onnxruntime as ort
+            self.session = InferenceSession(
+                onnx_path, providers=["CPUExecutionProvider"]
+            )
+            self.session.graph_optimization_level = (
+                ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            )
 
         self.nms_thresh = 0.4
         self.center_cache = {}
-        # input_cfg = self.session.get_inputs()[0]
-        # print(input_cfg)
-        # input_shape = input_cfg.shape
         input_shape = (1, 3, 640, 640)
         if isinstance(input_shape[2], str):
             self.input_size = None
         else:
             self.input_size = tuple(input_shape[2:4][::-1])
-        # input_name = input_cfg.name
-        # outputs = self.session.get_outputs()
-        # if len(outputs[0].shape) == 3:
         self.batched = True
-        output_names = []
-        # for output in outputs:
-        #     output_names.append(output.name)
-        # self.input_name = input_name
-        self.output_names = output_names
-        # self.use_kps = False
         self._num_anchors = 1
-        # outputs = np.arange(0, 10)
-        # if len(outputs) == 6:
-        #     self.fmc = 3
-        #     self._feat_stride_fpn = [8, 16, 32]
-        #     self._num_anchors = 2
-        # elif len(outputs) == 9:
         self.fmc = 3
         self._feat_stride_fpn = [8, 16, 32]
         self._num_anchors = 2
         self.use_kps = False
-        # elif len(outputs) == 10:
-        #     self.fmc = 5
-        #     self._feat_stride_fpn = [8, 16, 32, 64, 128]
-        #     self._num_anchors = 1
-        # elif len(outputs) == 15:
-        #     self.fmc = 5
-        #     self._feat_stride_fpn = [8, 16, 32, 64, 128]
-        #     self._num_anchors = 1
-        #     self.use_kps = True
 
     def forward(self, x, score_thresh, hailo_inference_face, network_group, input_vstreams_params, output_vstreams_params, input_vstream_info, result_queue):
         scores_list = []
         bboxes_list = []
         points_list = []
-        blob = cv2.cvtColor(x, cv2.COLOR_BGR2RGB)
-        blob = np.expand_dims(blob, axis=0)
-        # input_size = tuple(x.shape[0:2][::-1])
-        # blob = cv2.dnn.blobFromImage(
-        #     x, 1.0 / 128, input_size, (127.5, 127.5, 127.5), swapRB=True
-        # )
+        # blob = cv2.cvtColor(x, cv2.COLOR_BGR2RGB)
+        blob = np.expand_dims(x, axis=0)
 
-        input_data = {input_vstream_info.name: blob.astype(np.uint8)}
+        input_data = {input_vstream_info.name: blob}
         # Create infer process
-        infer_process = Process(target=hailo_inference_face, args=(network_group, input_vstreams_params, output_vstreams_params, input_data, result_queue))
+        infer_process = Process(target=hailo_inference_face, args=(network_group, input_vstreams_params, output_vstreams_params, input_data, result_queue, "face"))
         infer_process.start()
-        output = result_queue.get()
+        model, output = result_queue.get()
         infer_process.join()
         
 
         layer_from_shape: dict = {output[key].shape:key for key in output.keys()}
-        # print(layer_from_shape)
         net_outs = [sigmoid(output[layer_from_shape[1, 80, 80, 2]].reshape(1, -1, 1)),  # score 8
                     sigmoid(output[layer_from_shape[1, 40, 40, 2]].reshape(1, -1, 1)),  # score 16
                     sigmoid(output[layer_from_shape[1, 20, 20, 2]].reshape(1, -1, 1)),  # score 32
-                    output[layer_from_shape[1, 80, 80, 8]].reshape(1, -1, 4),  # bbox 8
-                    output[layer_from_shape[1, 40, 40, 8]].reshape(1, -1, 4),  # bbox 16
-                    output[layer_from_shape[1, 20, 20, 8]].reshape(1, -1, 4),  # bbox 32
-                    output[layer_from_shape[1, 80, 80, 20]].reshape(1, -1, 10), # kps 8
-                    output[layer_from_shape[1, 40, 40, 20]].reshape(1, -1, 10), # kps 16
-                    output[layer_from_shape[1, 20, 20, 20]].reshape(1, -1, 10)  # kps 32
+                    output[layer_from_shape[1, 80, 80, 8]].reshape(1, -1, 4),           # bbox 8
+                    output[layer_from_shape[1, 40, 40, 8]].reshape(1, -1, 4),           # bbox 16
+                    output[layer_from_shape[1, 20, 20, 8]].reshape(1, -1, 4),           # bbox 32
+                    output[layer_from_shape[1, 80, 80, 20]].reshape(1, -1, 10),         # kps 8
+                    output[layer_from_shape[1, 40, 40, 20]].reshape(1, -1, 10),         # kps 16
+                    output[layer_from_shape[1, 20, 20, 20]].reshape(1, -1, 10)          # kps 32
                     ]
         
-        # net_outs = hailo_inference_face.run(blob.astype(np.uint8), multi=True)
-        # print(net_outs.shape)
-        blob = blob.transpose((0, 3, 1, 2))
+        # blob = blob.transpose((0, 3, 1, 2))
 
-        input_height = blob.shape[2]
-        input_width = blob.shape[3]
+        input_height = blob.shape[1]
+        input_width = blob.shape[2]
         fmc = self.fmc
         for idx, stride in enumerate(self._feat_stride_fpn):
             if self.batched:
@@ -221,7 +184,7 @@ class FaceDetector:
             new_width = input_size[0]
             new_height = int(new_width * im_ratio)
         det_scale = float(new_height) / img.shape[0]
-        resized_img = cv2.resize(img, (new_width, new_height))
+        resized_img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_AREA)
         det_img = np.zeros((input_size[1], input_size[0], 3), dtype=np.uint8)
         det_img[:new_height, :new_width, :] = resized_img
 
