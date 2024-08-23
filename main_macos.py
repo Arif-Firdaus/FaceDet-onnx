@@ -89,7 +89,7 @@ def preprocess_image(image, input_size=(640, 640)):
 
 
 def main():
-    write_video = True
+    write_video = False
     cwd = os.getcwd()
     parser = ArgumentParser()
     parser.add_argument(

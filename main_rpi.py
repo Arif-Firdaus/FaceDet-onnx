@@ -191,7 +191,7 @@ def main():
     # Loading compiled HEFs:
     first_hef_path = "/home/rpi5/tapway/FaceDet-onnx/models_hailo/scrfd_2.5g.hef"
     second_hef_path = "/home/rpi5/tapway/FaceDet-onnx/models_hailo/age_O.hef"
-    third_hef_path = "/home/rpi5/tapway/FaceDet-onnx/models_hailo/gender.hef"
+    third_hef_path = "/home/rpi5/tapway/FaceDet-onnx/models_hailo/gender_O.hef"
     first_hef = HEF(first_hef_path)
     second_hef = HEF(second_hef_path)
     third_hef = HEF(third_hef_path)
@@ -305,20 +305,20 @@ def main():
                     continue
                 processed_image = preprocess_image(cropped_image)
 
-                input_data = {age_input_vstream_info.name: processed_image}
-                # Create infer process
-                age_infer_process = Process(
-                    target=infer,
-                    args=(
-                        age_network_group,
-                        age_input_vstreams_params,
-                        age_output_vstreams_params,
-                        input_data,
-                        result_queue,
-                        "age",
-                    ),
-                )
-                age_infer_process.start()
+                # input_data = {age_input_vstream_info.name: processed_image}
+                # # Create infer process
+                # age_infer_process = Process(
+                #     target=infer,
+                #     args=(
+                #         age_network_group,
+                #         age_input_vstreams_params,
+                #         age_output_vstreams_params,
+                #         input_data,
+                #         result_queue,
+                #         "age",
+                #     ),
+                # )
+                # age_infer_process.start()
 
                 input_data = {gender_input_vstream_info.name: processed_image}
                 # Create infer process
@@ -339,8 +339,8 @@ def main():
                 while not res_age or not res_gender:
                     model, res = result_queue.get()
                     if model == "age":
-                        res_age = res
-                        age_infer_process.join()
+                        res_age = 1
+                        # age_infer_process.join()
                     else:
                         res_gender = res
                         gender_infer_process.join()
