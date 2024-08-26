@@ -89,7 +89,6 @@ def preprocess_image(image, input_size=(640, 640)):
 
 
 def main():
-    write_video = False
     cwd = os.getcwd()
     parser = ArgumentParser()
     parser.add_argument(
@@ -105,9 +104,12 @@ def main():
         cwd + "/models_onnx/yolov8n_age_train.onnx",
         providers=["CoreMLExecutionProvider", "CPUExecutionProvider"],
     )
+    write_video = False
+
     age_session.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
     gender_session = InferenceSession(
+        "/Users/arif/Downloads/best.onnx",
         cwd + "/models_onnx/yolov8n_gender_train.onnx",
         providers=["CoreMLExecutionProvider", "CPUExecutionProvider"],
     )
@@ -151,9 +153,12 @@ def main():
     pred_to_gender = {0: "F", 1: "M"}
 
     cap = cv2.VideoCapture(0)
-    fourcc = cv2.VideoWriter_fourcc(*'AVC1')
-    out = cv2.VideoWriter('demo/test_video.mp4', fourcc, 15.0, (1920, 1080))
-    out_infer = cv2.VideoWriter('demo/test_video_onnx_infer.mp4', fourcc, 15.0, (1920, 1080))
+    if write_video:
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        out = cv2.VideoWriter("demo/test_video.mp4", fourcc, 15.0, (1920, 1080))
+        out_infer = cv2.VideoWriter(
+            "demo/test_video_onnx_infer.mp4", fourcc, 15.0, (1920, 1080)
+        )
     if not cap.isOpened():
         print("Error: Could not open webcam.")
         return
@@ -167,10 +172,13 @@ def main():
         if write_video:
             out.write(frame)
 
-        boxes, points = detector.detect(img=frame, score_thresh=0.5, input_size=(640, 640))
+        boxes, points = detector.detect(
+            img=frame, score_thresh=0.5, input_size=(640, 640)
+        )
         for box in boxes:
             x1, y1, x2, y2, score = box
-            x1, y1, x2, y2 = add_margin(frame, (x1, y1, x2, y2))
+            x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+            # x1, y1, x2, y2 = add_margin(frame, (x1, y1, x2, y2))
             cropped_image = frame[y1:y2, x1:x2]
             processed_image = preprocess_image(cropped_image)
             res_age = age_session.run(None, {"images": processed_image})
