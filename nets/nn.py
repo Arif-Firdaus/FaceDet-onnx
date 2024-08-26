@@ -1,8 +1,8 @@
 import os
 import cv2
 import numpy as np
+from sys import platform
 from multiprocessing import Process
-
 
 cwd = os.getcwd()
 
@@ -60,13 +60,41 @@ def distance2kps(points, distance, max_shape=None):
 
 
 class FaceDetector:
+    """
+    A class used to perform face detection using either an ONNX runtime session or HAILO Process.
+    
+    Attributes:
+        session: ONNX runtime session or None if not using ONNX.
+        input_name: The input layer name for the ONNX model.
+        output_names: List of output layer names for the ONNX model.
+        nms_thresh: Threshold for non-maximum suppression.
+        center_cache: Cache for center points of anchors.
+        input_size: The expected input size of the model.
+        batched: Boolean indicating if inputs are batched.
+        _num_anchors: Number of anchors used in the model.
+        fmc: Number of feature map levels.
+        _feat_stride_fpn: List of strides for feature pyramid networks.
+        use_kps: Boolean indicating if keypoints are used.
+    """
+
     def __init__(self, onnx_path=None, session=None):
+        """
+        Initializes the FaceDetector object with optional ONNX path or session.
+
+        Args:
+            onnx_path (str): Path to the ONNX model file.
+            session: Existing ONNX runtime session.
+        """
         self.session = session
         if onnx_path:
             from onnxruntime import InferenceSession
             import onnxruntime as ort
+            if platform == "darwin":
+                ep = ["CoreMLExecutionProvider", "CPUExecutionProvider"]
+            else:
+                ep = ["CPUExecutionProvider"]
             self.session = InferenceSession(
-                onnx_path, providers=["CoreMLExecutionProvider", "CPUExecutionProvider"]
+                onnx_path, providers=ep
             )
             self.session.graph_optimization_level = (
                 ort.GraphOptimizationLevel.ORT_ENABLE_ALL
@@ -83,6 +111,8 @@ class FaceDetector:
 
         self.nms_thresh = 0.4
         self.center_cache = {}
+
+        # Refer model architecture for these values
         input_shape = (1, 3, 640, 640)
         if isinstance(input_shape[2], str):
             self.input_size = None
@@ -96,19 +126,39 @@ class FaceDetector:
         self.use_kps = False
 
     def forward(self, x, score_thresh, hailo_inference_face, network_group, input_vstreams_params, output_vstreams_params, input_vstream_info, result_queue):
+        """
+        Performs a forward pass of the network to obtain face detection results.
+
+        Args:
+            x: Input image data.
+            score_thresh: Score threshold for detections.
+            hailo_inference_face: Hailo inference function.
+            network_group: Hailo network group.
+            input_vstreams_params: Input stream parameters for Hailo.
+            output_vstreams_params: Output stream parameters for Hailo.
+            input_vstream_info: Input stream info for Hailo.
+            result_queue: Queue to store inference results.
+
+        Returns:
+            scores_list: List of detection scores.
+            bboxes_list: List of bounding boxes.
+            points_list: List of keypoints.
+        """
         scores_list = []
         bboxes_list = []
         points_list = []
 
         if not self.session:
+            # Custom inference path using multiprocessing
             blob = np.expand_dims(x, axis=0)
             input_data = {input_vstream_info.name: blob}
-            # Create infer process
+            # Create infer process for Hailo
             infer_process = Process(target=hailo_inference_face, args=(network_group, input_vstreams_params, output_vstreams_params, input_data, result_queue, "face"))
             infer_process.start()
             _, output = result_queue.get()
             infer_process.join()
 
+            # Mapping output shape to layer name
             layer_from_shape: dict = {output[key].shape:key for key in output.keys()}
             net_outs = [sigmoid(output[layer_from_shape[1, 80, 80, 2]].reshape(1, -1, 1)),  # score 8
                         sigmoid(output[layer_from_shape[1, 40, 40, 2]].reshape(1, -1, 1)),  # score 16
@@ -121,6 +171,7 @@ class FaceDetector:
                         output[layer_from_shape[1, 20, 20, 20]].reshape(1, -1, 10)          # kps 32
                         ]
         else:
+            # ONNX inference path
             blob = cv2.cvtColor(x, cv2.COLOR_BGR2RGB)
             blob = np.expand_dims(blob, axis=0)
             net_outs = self.session.run(self.output_names, {self.input_name: blob.astype(np.float32).transpose(0, 3, 1, 2)/255.0})
@@ -178,6 +229,26 @@ class FaceDetector:
         self, network_group=None, input_vstreams_params=None, output_vstreams_params=None, input_vstream_info=None, result_queue=None, 
         img=None, score_thresh=0.5, input_size=None, max_num=0, metric="default", hailo_inference_face=None
     ):
+        """
+        Performs face detection on an image.
+
+        Args:
+            network_group: Hailo network group.
+            input_vstreams_params: Input stream parameters for Hailo.
+            output_vstreams_params: Output stream parameters for Hailo.
+            input_vstream_info: Input stream info for Hailo.
+            result_queue: Queue to store inference results.
+            img: The image in which to detect faces.
+            score_thresh (float): Minimum score for valid detections.
+            input_size: The size to which the input image should be resized.
+            max_num (int): Maximum number of faces to detect.
+            metric (str): Metric to sort detected faces.
+            hailo_inference_face: Hailo inference function.
+
+        Returns:
+            det: Detected bounding boxes.
+            points: Detected keypoints (if use_kps is True).
+        """
         assert input_size is not None or self.input_size is not None
         input_size = self.input_size if input_size is None else input_size
 
@@ -236,6 +307,15 @@ class FaceDetector:
         return det, points
 
     def nms(self, outputs):
+        """
+        Applies non-maximum suppression (NMS) to filter overlapping bounding boxes.
+
+        Args:
+            outputs: Array containing bounding boxes and their scores.
+
+        Returns:
+            keep: Indices of the bounding boxes to keep after NMS.
+        """
         thresh = self.nms_thresh
         x1 = outputs[:, 0]
         y1 = outputs[:, 1]
@@ -267,7 +347,8 @@ class FaceDetector:
 
 
 """
-after transpose only, no reshape included
+Output mapping of scrfd_2.5g.hef from Hailo model zoo. 
+The output ends at transpose so we need to add reshape to each output and sigmoid.
 
 {(1, 40, 40, 2): 'scrfd_2_5g/conv49',   score_16
 (1, 20, 20, 2): 'scrfd_2_5g/conv55',    score_32
@@ -293,11 +374,11 @@ endnodes = [infer_results[layer_from_shape[1, 80, 80, 4]],  # stride 8
 endnodes = [sigmoid(output[layer_from_shape[1, 80, 80, 2]].reshape(1, -1, 1)),  # score 8
             sigmoid(output[layer_from_shape[1, 40, 40, 2]].reshape(1, -1, 1)),  # score 16
             sigmoid(output[layer_from_shape[1, 20, 20, 2]].reshape(1, -1, 1)),  # score 32
-            output[layer_from_shape[1, 80, 80, 8]].reshape(1, -1, 4),  # bbox 8
-            output[layer_from_shape[1, 40, 40, 8]].reshape(1, -1, 4),  # bbox 16
-            output[layer_from_shape[1, 20, 20, 8]].reshape(1, -1, 4),  # bbox 32
-            output[layer_from_shape[1, 80, 80, 20]].reshape(1, -1, 10), # kps 8
-            output[layer_from_shape[1, 40, 40, 20]].reshape(1, -1, 10), # kps 16
-            output[layer_from_shape[1, 20, 20, 20]].reshape(1, -1, 10)  # kps 32
+            output[layer_from_shape[1, 80, 80, 8]].reshape(1, -1, 4),           # bbox 8
+            output[layer_from_shape[1, 40, 40, 8]].reshape(1, -1, 4),           # bbox 16
+            output[layer_from_shape[1, 20, 20, 8]].reshape(1, -1, 4),           # bbox 32
+            output[layer_from_shape[1, 80, 80, 20]].reshape(1, -1, 10),         # kps 8
+            output[layer_from_shape[1, 40, 40, 20]].reshape(1, -1, 10),         # kps 16
+            output[layer_from_shape[1, 20, 20, 20]].reshape(1, -1, 10)          # kps 32
             ]
 """

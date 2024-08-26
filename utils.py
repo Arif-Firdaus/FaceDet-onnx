@@ -4,6 +4,8 @@ from functools import partial
 from loguru import logger
 import numpy as np
 
+#! Do not remove this file, it can be used for single model hailo inference
+
 def sigmoid(x):
     return 1 / (1 + np.exp(-x))
 
@@ -90,23 +92,20 @@ class HailoInference:
             with self.network_group.activate(self.network_group_params):
                 # output = infer_pipeline.infer(input_dict)[self.output_vstream_info[0].name]
                 output = infer_pipeline.infer(input_dict)
-        # print(output.keys())
         if multi:
             layer_from_shape: dict = {output[key].shape:key for key in output.keys()}
-            # print(layer_from_shape)
             endnodes = [sigmoid(output[layer_from_shape[1, 80, 80, 2]].reshape(1, -1, 1)),  # score 8
                         sigmoid(output[layer_from_shape[1, 40, 40, 2]].reshape(1, -1, 1)),  # score 16
                         sigmoid(output[layer_from_shape[1, 20, 20, 2]].reshape(1, -1, 1)),  # score 32
-                        output[layer_from_shape[1, 80, 80, 8]].reshape(1, -1, 4),  # bbox 8
-                        output[layer_from_shape[1, 40, 40, 8]].reshape(1, -1, 4),  # bbox 16
-                        output[layer_from_shape[1, 20, 20, 8]].reshape(1, -1, 4),  # bbox 32
-                        output[layer_from_shape[1, 80, 80, 20]].reshape(1, -1, 10), # kps 8
-                        output[layer_from_shape[1, 40, 40, 20]].reshape(1, -1, 10), # kps 16
-                        output[layer_from_shape[1, 20, 20, 20]].reshape(1, -1, 10)  # kps 32
+                        output[layer_from_shape[1, 80, 80, 8]].reshape(1, -1, 4),           # bbox 8
+                        output[layer_from_shape[1, 40, 40, 8]].reshape(1, -1, 4),           # bbox 16
+                        output[layer_from_shape[1, 20, 20, 8]].reshape(1, -1, 4),           # bbox 32
+                        output[layer_from_shape[1, 80, 80, 20]].reshape(1, -1, 10),         # kps 8
+                        output[layer_from_shape[1, 40, 40, 20]].reshape(1, -1, 10),         # kps 16
+                        output[layer_from_shape[1, 20, 20, 20]].reshape(1, -1, 10)          # kps 32
                         ]
         else:
             endnodes = output
-        # print(endnodes[0].shape, endnodes[3].shape, endnodes[6].shape)
 
         return endnodes
 

@@ -2,6 +2,7 @@ import time
 import os
 import cv2
 import numpy as np
+from argparse import ArgumentParser
 from multiprocessing import Process, Queue
 
 from nets.nn import FaceDetector
@@ -68,7 +69,6 @@ def write_text_top_left(image, text, font_scale=1.5, color=(0, 255, 0), thicknes
 
 def add_margin(img, bbox, height_margin=0.20, width_margin=0.10):
     img_width, img_height = img.shape[1], img.shape[0]
-    # Unpack the bounding box coordinates
     left, top, right, bottom = bbox
 
     # Calculate the width and height of the current bounding box
@@ -85,11 +85,6 @@ def add_margin(img, bbox, height_margin=0.20, width_margin=0.10):
     new_top = max(0, top - margin_y)
     new_right = min(img_width, right + margin_x)
     new_bottom = min(img_height, bottom + margin_y_bottom)
-    # new_bottom = bottom
-    new_left, new_top, new_right, new_bottom = np.clip(
-        [new_left, new_top, new_right, new_bottom], 0, [1920, 1080, 1920, 1080]
-        # [new_left, new_top, new_right, new_bottom], 0, [896, 960, 896, 960]
-    )
 
     return int(new_left), int(new_top), int(new_right), int(new_bottom)
 
@@ -99,6 +94,27 @@ def preprocess_image(image, input_size=(640, 640)):
     image_resized = np.expand_dims(image_resized, axis=0)
     return image_resized.astype(np.uint8)
 
+
+def hailo_session(hef, target, output_dtype: str="FLOAT32"):
+    configure_params = ConfigureParams.create_from_hef(
+        hef=hef, interface=HailoStreamInterface.PCIe
+    )
+    network_groups = target.configure(hef, configure_params)
+    network_group = network_groups[0]
+
+    # Create input and output virtual streams params
+    input_format_type = hef.get_input_vstream_infos()[0].format.type
+    input_vstreams_params = InputVStreamParams.make_from_network_group(
+        network_group, format_type=input_format_type
+    )
+    output_vstreams_params = OutputVStreamParams.make_from_network_group(
+        network_group, format_type=getattr(FormatType, output_dtype)
+    )
+
+    # Define dataset params
+    input_vstream_info = hef.get_input_vstream_infos()[0]
+
+    return network_group, input_vstreams_params, output_vstreams_params, input_vstream_info
 
 # Define the function to run inference on the model
 def infer(
@@ -117,10 +133,25 @@ def infer(
 
 
 def main():
-    video_testing = False
     cwd = os.getcwd()
+    parser = ArgumentParser()
+    parser.add_argument(
+        "--video-testing",
+        type=bool,
+        default=False,
+        help="write video stream with inference to demo folder",
+    )
+    parser.add_argument(
+        "--margin",
+        type=bool,
+        default=False,
+        help="add margin to face bounding box",
+    )
+    args = parser.parse_args()
+    
     detector = FaceDetector()
 
+    # Mapping from model output index to encoded age group
     age_to_age = {
         0: 0,
         1: 1,
@@ -138,7 +169,7 @@ def main():
         13: 8,
         14: 9,
     }
-
+    # Mapping from encoded age group to age group string
     pred_to_age = {
         0: "0-4",
         1: "5-9",
@@ -159,39 +190,37 @@ def main():
 
     pred_to_gender = {0: "F", 1: "M"}
 
+    # Picamera2 coifiguration setup
+    #! Configuration options that affects the FPS by order (from highest to lowest):
+    # ? noise reduction mode / Sensor modes / colour_space or format (memory too) / resolution / buffer_count / queue / HDR
     picam2 = Picamera2()
     picam2.set_controls(
         {
             "NoiseReductionMode": controls.draft.NoiseReductionModeEnum.Fast,  # ? HighQuality, Fast
             "HdrMode": controls.HdrModeEnum.Night,                             # ? Night, SingleExposure
-        }  
+        }
     )
-    mode = picam2.sensor_modes[0]
-    camera_res_height = 960
+    mode = picam2.sensor_modes[0]                      # ? There are three sensor modes available for the v3 camera / HDR only one
+    camera_res_height = 960                            # ? Both resolution need to follow the given aligh_configuration resolution
     camera_res_width = 1536
-    camera_config = picam2.create_video_configuration(
+    camera_config = picam2.create_video_configuration( # ? Configuration for main stream
         colour_space=ColorSpace.Rec709(),
         queue=True,
         sensor={"output_size": mode["size"], "bit_depth": mode["bit_depth"]},
         main={"size": (camera_res_width, camera_res_height), "format": "YUV420"},
         buffer_count=9,
-    )
-    # * Gstreamer
-    # ? FPS
-    # ? Sensor modes
-    # ? noise reduction
-    # ? CMA memory
-    picam2.align_configuration(camera_config)
+    )                             
+    picam2.align_configuration(camera_config)          # ? Align the configuration to the allowed values
     print(camera_config["main"])
-    picam2.configure(camera_config)
+    picam2.configure(camera_config)                    # ? Init the camera with the given configuration
     picam2.start()
 
     start_time = time.time()
     num_iterations = 0
-    # Loading compiled HEFs:
-    first_hef_path = "/home/rpi5/tapway/FaceDet-onnx/models_hailo/scrfd_2.5g.hef"
-    second_hef_path = "/home/rpi5/tapway/FaceDet-onnx/models_hailo/age_O1.hef"
-    third_hef_path = "/home/rpi5/tapway/FaceDet-onnx/models_hailo/gender_O.hef"
+    # Load compiled HEFs:
+    first_hef_path = cwd + "/models_hailo/scrfd_2.5g.hef"
+    second_hef_path = cwd + "/models_hailo/age_O1.hef"
+    third_hef_path = cwd + "/models_hailo/gender_O.hef"
     first_hef = HEF(first_hef_path)
     second_hef = HEF(second_hef_path)
     third_hef = HEF(third_hef_path)
@@ -204,78 +233,83 @@ def main():
     with VDevice(params) as target:
         result_queue = Queue()
 
-        #! Face
-        hef = hefs[0]
-        configure_params = ConfigureParams.create_from_hef(
-            hef=hef, interface=HailoStreamInterface.PCIe
-        )
-        network_groups = target.configure(hef, configure_params)
-        face_network_group = network_groups[0]
+        # #! Face
+        # hef = hefs[0]
+        # configure_params = ConfigureParams.create_from_hef(
+        #     hef=hef, interface=HailoStreamInterface.PCIe
+        # )
+        # network_groups = target.configure(hef, configure_params)
+        # face_network_group = network_groups[0]
 
-        # Create input and output virtual streams params
-        input_format_type = hef.get_input_vstream_infos()[0].format.type
-        face_input_vstreams_params = InputVStreamParams.make_from_network_group(
-            face_network_group, format_type=input_format_type
-        )
-        face_output_vstreams_params = OutputVStreamParams.make_from_network_group(
-            face_network_group, format_type=getattr(FormatType, "FLOAT32")
-        )
+        # # Create input and output virtual streams params
+        # input_format_type = hef.get_input_vstream_infos()[0].format.type
+        # face_input_vstreams_params = InputVStreamParams.make_from_network_group(
+        #     face_network_group, format_type=input_format_type
+        # )
+        # face_output_vstreams_params = OutputVStreamParams.make_from_network_group(
+        #     face_network_group, format_type=getattr(FormatType, "FLOAT32")
+        # )
 
-        # Define dataset params
-        face_input_vstream_info = hef.get_input_vstream_infos()[0]
+        # # Define dataset params
+        # face_input_vstream_info = hef.get_input_vstream_infos()[0]
 
-        #! Age
-        hef = hefs[1]
-        configure_params = ConfigureParams.create_from_hef(
-            hef=hef, interface=HailoStreamInterface.PCIe
-        )
-        network_groups = target.configure(hef, configure_params)
-        age_network_group = network_groups[0]
+        # #! Age
+        # hef = hefs[1]
+        # configure_params = ConfigureParams.create_from_hef(
+        #     hef=hef, interface=HailoStreamInterface.PCIe
+        # )
+        # network_groups = target.configure(hef, configure_params)
+        # age_network_group = network_groups[0]
 
-        # Create input and output virtual streams params
-        input_format_type = hef.get_input_vstream_infos()[0].format.type
-        age_input_vstreams_params = InputVStreamParams.make_from_network_group(
-            age_network_group, format_type=input_format_type
-        )
-        age_output_vstreams_params = OutputVStreamParams.make_from_network_group(
-            age_network_group, format_type=getattr(FormatType, "FLOAT32")
-        )
+        # # Create input and output virtual streams params
+        # input_format_type = hef.get_input_vstream_infos()[0].format.type
+        # age_input_vstreams_params = InputVStreamParams.make_from_network_group(
+        #     age_network_group, format_type=input_format_type
+        # )
+        # age_output_vstreams_params = OutputVStreamParams.make_from_network_group(
+        #     age_network_group, format_type=getattr(FormatType, "FLOAT32")
+        # )
 
-        # Define dataset params
-        age_input_vstream_info = hef.get_input_vstream_infos()[0]
+        # # Define dataset params
+        # age_input_vstream_info = hef.get_input_vstream_infos()[0]
 
-        #! Gender
-        hef = hefs[2]
-        configure_params = ConfigureParams.create_from_hef(
-            hef=hef, interface=HailoStreamInterface.PCIe
-        )
-        network_groups = target.configure(hef, configure_params)
-        gender_network_group = network_groups[0]
+        # #! Gender
+        # hef = hefs[2]
+        # configure_params = ConfigureParams.create_from_hef(
+        #     hef=hef, interface=HailoStreamInterface.PCIe
+        # )
+        # network_groups = target.configure(hef, configure_params)
+        # gender_network_group = network_groups[0]
 
-        # Create input and output virtual streams params
-        input_format_type = hef.get_input_vstream_infos()[0].format.type
-        gender_input_vstreams_params = InputVStreamParams.make_from_network_group(
-            gender_network_group, format_type=input_format_type
-        )
-        gender_output_vstreams_params = OutputVStreamParams.make_from_network_group(
-            gender_network_group, format_type=getattr(FormatType, "FLOAT32")
-        )
+        # # Create input and output virtual streams params
+        # input_format_type = hef.get_input_vstream_infos()[0].format.type
+        # gender_input_vstreams_params = InputVStreamParams.make_from_network_group(
+        #     gender_network_group, format_type=input_format_type
+        # )
+        # gender_output_vstreams_params = OutputVStreamParams.make_from_network_group(
+        #     gender_network_group, format_type=getattr(FormatType, "FLOAT32")
+        # )
+        # # Define dataset params
+        # gender_input_vstream_info = hef.get_input_vstream_infos()[0]
 
-        # Define dataset params
-        gender_input_vstream_info = hef.get_input_vstream_infos()[0]
+        face_network_group, face_input_vstreams_params, face_output_vstreams_params, face_input_vstream_info = hailo_session(hefs[0], target)
+        age_network_group, age_input_vstreams_params, age_output_vstreams_params, age_input_vstream_info = hailo_session(hefs[1], target)
+        gender_network_group, gender_input_vstreams_params, gender_output_vstreams_params, gender_input_vstream_info = hailo_session(hefs[2], target)
 
-        if video_testing:
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            out = cv2.VideoWriter('demo/test_video_hailo_infer.mp4', fourcc, 15.0, (1920, 1080))
+        if args.video_testing:
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            out = cv2.VideoWriter(
+                cwd + "/demo/test_video_hailo_infer.mp4", fourcc, 15.0, (1920, 1080)
+            )
 
-            video_file = 'demo/test_video.mp4'
+            video_file = cwd + "/demo/test_video.mp4"
             cap = cv2.VideoCapture(video_file)
             if not cap.isOpened():
                 print("Error: Could not open webcam.")
                 return
 
         while True:
-            if not video_testing:
+            if not args.video_testing:
                 frame = picam2.capture_array("main")
                 frame = cv2.cvtColor(frame, cv2.COLOR_YUV420p2RGB)
                 frame = cv2.flip(frame, 1)
@@ -283,6 +317,7 @@ def main():
                 ret, frame = cap.read()
                 if not ret:
                     break
+            frame_height, frame_width, _ = frame.shape
 
             boxes, points = detector.detect(
                 face_network_group,
@@ -295,12 +330,14 @@ def main():
                 input_size=(640, 640),
                 hailo_inference_face=infer,
             )
-            # break
             for box in boxes:
-                # break
                 x1, y1, x2, y2, score = box
-                x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
-                # x1, y1, x2, y2 = add_margin(frame, (x1, y1, x2, y2))
+                
+                if not args.margin:
+                    x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+                else:
+                    x1, y1, x2, y2 = add_margin(frame, (x1, y1, x2, y2))
+                x1, y1, x2, y2 = np.clip([x1, y1, x2, y2], 0, [frame_width, frame_height, frame_width, frame_height])
                 cropped_image = frame[y1:y2, x1:x2]
                 if cropped_image.shape[0] == 0 or cropped_image.shape[1] == 0:
                     continue
@@ -353,12 +390,10 @@ def main():
                 #         gender_infer_process.join()
 
                 age = pred_to_age[age_to_age[res_age["age/softmax1"][0].argmax()]]
-                # age = 1
                 gender = pred_to_gender[res_gender["gender/softmax1"][0].argmax()]
 
                 cv2.putText(
                     frame,
-                    # f"{age}",
                     f"{gender}:{age}",
                     (x1, int(y1 * 0.99)),
                     cv2.FONT_HERSHEY_SIMPLEX,
@@ -377,7 +412,7 @@ def main():
             num_iterations += 1
             fps = num_iterations / iteration_time
             frame = write_text_top_left(frame, f"{fps:.2f} FPS")
-            if video_testing:
+            if args.video_testing:
                 out.write(frame)
             cv2.imshow("Webcam", frame)
 
@@ -389,7 +424,7 @@ def main():
 
     print(f"Total time elapsed: {time_elapsed} seconds")
     print(f"Iterations per second: {iterations_per_second}")
-    if video_testing:
+    if args.video_testing:
         out.release()
     cv2.destroyAllWindows()
 

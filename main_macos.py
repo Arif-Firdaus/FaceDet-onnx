@@ -2,6 +2,7 @@ import time
 import os
 import cv2
 import numpy as np
+from sys import platform
 from argparse import ArgumentParser
 
 from nets.nn import FaceDetector
@@ -57,7 +58,6 @@ def write_text_top_left(image, text, font_scale=1.5, color=(0, 255, 0), thicknes
 
 def add_margin(img, bbox, height_margin=0.2, width_margin=0.1):
     img_width, img_height = img.shape[1], img.shape[0]
-    # Unpack the bounding box coordinates
     left, top, right, bottom = bbox
 
     # Calculate the width and height of the current bounding box
@@ -74,7 +74,6 @@ def add_margin(img, bbox, height_margin=0.2, width_margin=0.1):
     new_top = max(0, top - margin_y)
     new_right = min(img_width, right + margin_x)
     new_bottom = min(img_height, bottom + margin_y_bottom)
-    # new_bottom = bottom
 
     return int(new_left), int(new_top), int(new_right), int(new_bottom)
 
@@ -92,29 +91,45 @@ def main():
     cwd = os.getcwd()
     parser = ArgumentParser()
     parser.add_argument(
-        "--model",
+        "--face-model",
         type=str,
         default=cwd + "/models_onnx/scrfd_2.5g_bn.onnx",
         help="model file path",
     )
+    parser.add_argument(
+        "--write-video",
+        type=bool,
+        default=False,
+        help="write video stream with/without inference to demo folder",
+    )
+    parser.add_argument(
+        "--margin",
+        type=bool,
+        default=False,
+        help="add margin to face bounding box",
+    )
 
     args = parser.parse_args()
-    detector = FaceDetector(args.model)
+    detector = FaceDetector(args.face_model)
+    if platform == "darwin":
+        ep = ["CoreMLExecutionProvider", "CPUExecutionProvider"]
+    else:
+        ep = ["CPUExecutionProvider"]
+    # ONNX model initialization
     age_session = InferenceSession(
         cwd + "/models_onnx/yolov8n_age_train.onnx",
-        providers=["CoreMLExecutionProvider", "CPUExecutionProvider"],
+        providers=ep,
     )
-    write_video = False
 
     age_session.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
     gender_session = InferenceSession(
-        "/Users/arif/Downloads/best.onnx",
         cwd + "/models_onnx/yolov8n_gender_train.onnx",
-        providers=["CoreMLExecutionProvider", "CPUExecutionProvider"],
+        providers=ep,
     )
     gender_session.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
+    # Mapping from model output index to encoded age group
     age_to_age = {
         0: 0,
         1: 1,
@@ -132,7 +147,7 @@ def main():
         13: 8,
         14: 9,
     }
-
+    # Mapping from encoded age group to age group string
     pred_to_age = {
         0: "0-4",
         1: "5-9",
@@ -153,7 +168,7 @@ def main():
     pred_to_gender = {0: "F", 1: "M"}
 
     cap = cv2.VideoCapture(0)
-    if write_video:
+    if args.write_video:
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         out = cv2.VideoWriter("demo/test_video.mp4", fourcc, 15.0, (1920, 1080))
         out_infer = cv2.VideoWriter(
@@ -168,8 +183,9 @@ def main():
         ret, frame = cap.read()
         if not ret:
             break
+        height, width, _ = frame.shape
         frame = cv2.flip(frame, 1)
-        if write_video:
+        if args.write_video:
             out.write(frame)
 
         boxes, points = detector.detect(
@@ -177,8 +193,16 @@ def main():
         )
         for box in boxes:
             x1, y1, x2, y2, score = box
-            x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
-            # x1, y1, x2, y2 = add_margin(frame, (x1, y1, x2, y2))
+
+            if not args.margin:
+                x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+            else:
+                x1, y1, x2, y2 = add_margin(frame, (x1, y1, x2, y2))
+
+            # Ensure the bounding box stays within the image boundaries
+            x1, y1, x2, y2 = np.clip(
+                [x1, y1, x2, y2], 0, [width, height, width, height]
+            )
             cropped_image = frame[y1:y2, x1:x2]
             processed_image = preprocess_image(cropped_image)
             res_age = age_session.run(None, {"images": processed_image})
@@ -196,16 +220,12 @@ def main():
                 cv2.LINE_AA,
             )
             cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        # if points is not None:
-        #     for point in points:
-        #         for kp in point:
-        #             kp = kp.astype(np.int32)
-        #             cv2.circle(frame, tuple(kp), 1, (0, 255, 0), 2)
+
         iteration_time = time.time() - start_time
         num_iterations += 1
         fps = num_iterations / iteration_time
         frame = write_text_top_left(frame, f"{fps:.2f} FPS")
-        if write_video:
+        if args.write_video:
             out_infer.write(frame)
         cv2.imshow("Webcam", frame)
 
@@ -219,8 +239,9 @@ def main():
     print(f"Total time elapsed: {time_elapsed} seconds")
     print(f"Iterations per second: {iterations_per_second}")
     cap.release()
-    out.release()
-    out_infer.release()
+    if args.write_video:
+        out.release()
+        out_infer.release()
     cv2.destroyAllWindows()
 
 
