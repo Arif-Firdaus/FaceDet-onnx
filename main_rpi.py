@@ -87,7 +87,7 @@ def add_margin(img, bbox, height_margin=0.20, width_margin=0.10):
     new_bottom = min(img_height, bottom + margin_y_bottom)
     # new_bottom = bottom
     new_left, new_top, new_right, new_bottom = np.clip(
-        [new_left, new_top, new_right, new_bottom], 0, [1080, 1920, 1080, 1920]
+        [new_left, new_top, new_right, new_bottom], 0, [1920, 1080, 1920, 1080]
         # [new_left, new_top, new_right, new_bottom], 0, [896, 960, 896, 960]
     )
 
@@ -117,7 +117,7 @@ def infer(
 
 
 def main():
-    video_testing = True
+    video_testing = False
     cwd = os.getcwd()
     detector = FaceDetector()
 
@@ -190,7 +190,7 @@ def main():
     num_iterations = 0
     # Loading compiled HEFs:
     first_hef_path = "/home/rpi5/tapway/FaceDet-onnx/models_hailo/scrfd_2.5g.hef"
-    second_hef_path = "/home/rpi5/tapway/FaceDet-onnx/models_hailo/age_O.hef"
+    second_hef_path = "/home/rpi5/tapway/FaceDet-onnx/models_hailo/age_O1.hef"
     third_hef_path = "/home/rpi5/tapway/FaceDet-onnx/models_hailo/gender_O.hef"
     first_hef = HEF(first_hef_path)
     second_hef = HEF(second_hef_path)
@@ -265,10 +265,10 @@ def main():
         gender_input_vstream_info = hef.get_input_vstream_infos()[0]
 
         if video_testing:
-            fourcc = cv2.VideoWriter_fourcc(*'MP4V')
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
             out = cv2.VideoWriter('demo/test_video_hailo_infer.mp4', fourcc, 15.0, (1920, 1080))
 
-            video_file = 'demo/test_video.mp4'  # Replace with your video file name
+            video_file = 'demo/test_video.mp4'
             cap = cv2.VideoCapture(video_file)
             if not cap.isOpened():
                 print("Error: Could not open webcam.")
@@ -299,26 +299,27 @@ def main():
             for box in boxes:
                 # break
                 x1, y1, x2, y2, score = box
-                x1, y1, x2, y2 = add_margin(frame, (x1, y1, x2, y2))
+                x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+                # x1, y1, x2, y2 = add_margin(frame, (x1, y1, x2, y2))
                 cropped_image = frame[y1:y2, x1:x2]
                 if cropped_image.shape[0] == 0 or cropped_image.shape[1] == 0:
                     continue
                 processed_image = preprocess_image(cropped_image)
 
-                # input_data = {age_input_vstream_info.name: processed_image}
-                # # Create infer process
-                # age_infer_process = Process(
-                #     target=infer,
-                #     args=(
-                #         age_network_group,
-                #         age_input_vstreams_params,
-                #         age_output_vstreams_params,
-                #         input_data,
-                #         result_queue,
-                #         "age",
-                #     ),
-                # )
-                # age_infer_process.start()
+                input_data = {age_input_vstream_info.name: processed_image}
+                # Create infer process
+                age_infer_process = Process(
+                    target=infer,
+                    args=(
+                        age_network_group,
+                        age_input_vstreams_params,
+                        age_output_vstreams_params,
+                        input_data,
+                        result_queue,
+                        "age",
+                    ),
+                )
+                age_infer_process.start()
 
                 input_data = {gender_input_vstream_info.name: processed_image}
                 # Create infer process
@@ -339,13 +340,20 @@ def main():
                 while not res_age or not res_gender:
                     model, res = result_queue.get()
                     if model == "age":
-                        res_age = 1
-                        # age_infer_process.join()
+                        res_age = res
+                        age_infer_process.join()
                     else:
                         res_gender = res
                         gender_infer_process.join()
+                # res_age, res_gender = None, None
+                # while not res_gender:
+                #     model, res = result_queue.get()
+                #     if model == "gender":
+                #         res_gender = res
+                #         gender_infer_process.join()
 
                 age = pred_to_age[age_to_age[res_age["age/softmax1"][0].argmax()]]
+                # age = 1
                 gender = pred_to_gender[res_gender["gender/softmax1"][0].argmax()]
 
                 cv2.putText(
@@ -381,7 +389,8 @@ def main():
 
     print(f"Total time elapsed: {time_elapsed} seconds")
     print(f"Iterations per second: {iterations_per_second}")
-    out.release()
+    if video_testing:
+        out.release()
     cv2.destroyAllWindows()
 
 
