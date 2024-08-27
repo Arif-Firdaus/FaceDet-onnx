@@ -19,31 +19,53 @@ The code is designed to run efficiently on Hailo AI hardware, making use of its 
    Refer the installation and updating guide here [picamera2-manual.pdf](https://github.com/user-attachments/files/16744920/picamera2-manual.pdf)
 
 2. **Create vnenv with system packages and Activate**
-   ```bash
+   ```
    mkdir hailo
    python -m venv hailo --system-site-packages
    source hailo/bin/activate
-   
+   ```
 3. **Clone the Repository**:
-   ```bash
+   ```
    git clone https://github.com/Arif-Firdaus/FaceDet-onnx.git
    cd FaceDet-onnx
-   
-5. **Install Python dependencies**
-   ```bash
+   ```
+4. **Install Python dependencies**
+   ```
    pip install -r requirements.txt
-
-6. **Install (HailoRT PCIe driver,HailoRT,PyHailoRT) for Ubuntu, Python 3.11**
+   ```
+5. **Install (HailoRT PCIe driver,HailoRT,PyHailoRT) for Ubuntu, Python 3.11**
    1. **Install DKMS**
-      ```bash
+      ```
       sudo apt update && sudo apt install --no-install-recommends dkms
       sudo reboot
+      ```
    2. **Install (HailoRT PCIe driver,HailoRT,PyHailoRT)**
 
       Refer the installation guide for HailoRT/ARM64/Linux/Python 3.11 here [hailort_4.18.0_user_guide.pdf](https://github.com/user-attachments/files/16744913/hailort_4.18.0_user_guide.pdf)
       
    4. **Enable multi-process service (to allow running models parallelly)**
-      ```bash
+      ```
       sudo systemctl enable --now hailort.service
+      ```
+
+## Installation (onnxruntime)
+
+For onnxruntime you can skip the previously mentioned step 1-2 and do steps 3-4 only to start running.
       
-## Usage...
+## Usage
+
+Run the main script with optional command-line arguments to start face detection and classification.
+
+For onnxruntime:
+- `--write-video`: (Optional) Write video stream without and with annotations to the demo folder.
+- `--margin`: (Optional) Add a margin to the face bounding box.
+```
+python main_onnx.py [--write-video] [--margin]
+```
+
+For Hailo with RPi5
+- `--video-testing`: (Optional) Write video stream with annotations to the demo folder.
+- `--margin`: (Optional) Add a margin to the face bounding box.
+```
+python main_hailo_rpi.py [--video-testing] [--margin]
+```
