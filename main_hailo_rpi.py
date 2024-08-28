@@ -67,7 +67,25 @@ def write_text_top_left(image, text, font_scale=1.5, color=(0, 255, 0), thicknes
     return image
 
 
-def add_margin(img, bbox, height_margin=0.20, width_margin=0.10):
+def add_margin(
+    img: np.ndarray,
+    bbox: tuple,
+    height_margin: float = 0.20,
+    width_margin: float = 0.10,
+) -> tuple:
+    """
+    Adjusts a bounding box by adding a margin around it.
+
+    Args:
+        img (numpy.ndarray): The image containing the bounding box.
+        bbox (tuple): A tuple containing the bounding box coordinates (left, top, right, bottom).
+        height_margin (float): The fractional margin to add to the height of the bounding box (default: 0.20).
+        width_margin (float): The fractional margin to add to the width of the bounding box (default: 0.10).
+
+    Returns:
+        tuple: Adjusted bounding box coordinates (new_left, new_top, new_right, new_bottom) as integers,
+               ensuring the bounding box stays within the image boundaries.
+    """
     img_width, img_height = img.shape[1], img.shape[0]
     left, top, right, bottom = bbox
 
@@ -89,13 +107,38 @@ def add_margin(img, bbox, height_margin=0.20, width_margin=0.10):
     return int(new_left), int(new_top), int(new_right), int(new_bottom)
 
 
-def preprocess_image(image, input_size=(640, 640)):
+def preprocess_image(image: np.ndarray, input_size: tuple = (640, 640)) -> np.ndarray:
+    """
+    Preprocesses an image by resizing it to the specified input size and formatting it for model input.
+
+    Args:
+        image (numpy.ndarray): The original image to preprocess.
+        input_size (tuple): The target size (width, height) for resizing the image (default: (640, 640)).
+
+    Returns:
+        numpy.ndarray: The preprocessed image, resized and expanded with an extra dimension to match model input requirements.
+    """
     image_resized = cv2.resize(image, input_size, interpolation=cv2.INTER_LINEAR)
     image_resized = np.expand_dims(image_resized, axis=0)
     return image_resized.astype(np.uint8)
 
 
-def hailo_session(hef, target, output_dtype: str="FLOAT32"):
+def hailo_session(hef: HEF, target: VDevice, output_dtype: str = "FLOAT32"):
+    """
+    Initializes and configures a Hailo session for model inference.
+
+    Args:
+        hef (HEF): The Hailo Execution File (HEF) that contains the model.
+        target (VDevice): The Hailo VDevice target that manages the hardware resources.
+        output_dtype (str): Data type of the output stream, default is "FLOAT32".
+
+    Returns:
+        tuple: Contains the network group, input vstreams parameters, output vstreams parameters, and input vstream info:
+            - network_group (NetworkGroup): Configured network group for inference.
+            - input_vstreams_params (InputVStreamParams): Parameters for the input virtual stream.
+            - output_vstreams_params (OutputVStreamParams): Parameters for the output virtual stream.
+            - input_vstream_info (VStreamInfo): Information about the input virtual stream.
+    """
     configure_params = ConfigureParams.create_from_hef(
         hef=hef, interface=HailoStreamInterface.PCIe
     )
@@ -114,9 +157,14 @@ def hailo_session(hef, target, output_dtype: str="FLOAT32"):
     # Define dataset params
     input_vstream_info = hef.get_input_vstream_infos()[0]
 
-    return network_group, input_vstreams_params, output_vstreams_params, input_vstream_info
+    return (
+        network_group,
+        input_vstreams_params,
+        output_vstreams_params,
+        input_vstream_info,
+    )
 
-# Define the function to run inference on the model
+
 def infer(
     network_group,
     input_vstreams_params,
@@ -125,6 +173,20 @@ def infer(
     infer_results_queue,
     queue_name: str,
 ):
+    """
+    Executes inference on a specified network group and places the results in a queue.
+
+    Args:
+        network_group (NetworkGroup): The configured network group to run the inference.
+        input_vstreams_params (InputVStreamParams): Parameters for the input virtual stream.
+        output_vstreams_params (OutputVStreamParams): Parameters for the output virtual stream.
+        input_data (dict): The input data for inference, keyed by stream name.
+        infer_results_queue (Queue): A multiprocessing queue to store the inference results.
+        queue_name (str): The identifier for the queue entry (e.g., "face", "age", "gender").
+
+    Returns:
+        None. The inference results are put into the `infer_results_queue`.
+    """
     with InferVStreams(
         network_group, input_vstreams_params, output_vstreams_params
     ) as infer_pipeline:
@@ -133,24 +195,39 @@ def infer(
 
 
 def main():
+    """
+    Main function to execute the face detection and age/gender classification pipeline.
+
+    This function sets up the camera configuration, loads the Hailo models for face detection,
+    age and gender classification, and processes video input either from a live camera feed or
+    a pre-recorded video file. It performs inference using the Hailo device and displays the results.
+
+    Args:
+        None. All parameters are parsed from command-line arguments.
+
+    Returns:
+        None. This function runs indefinitely until manually terminated.
+    """
     cwd = os.getcwd()
     parser = ArgumentParser()
     parser.add_argument(
         "--video-testing",
-        type=bool,
-        default=False,
+        dest="video_testing",
+        action="store_true",
         help="write video stream with inference to demo folder",
     )
     parser.add_argument(
         "--margin",
-        type=bool,
-        default=False,
+        dest="margin",
+        action="store_true",
         help="add margin to face bounding box",
     )
     args = parser.parse_args()
-    
+
+    # Initialize the face detector
     detector = FaceDetector()
 
+    # * Define mappings for age and gender classification
     # Mapping from model output index to encoded age group
     age_to_age = {
         0: 0,
@@ -190,7 +267,7 @@ def main():
 
     pred_to_gender = {0: "F", 1: "M"}
 
-    # Picamera2 coifiguration setup
+    # Picamera2 configuration setup
     #! Configuration options that affects the FPS by order (from highest to lowest):
     # ? noise reduction mode / Sensor modes / colour_space or format (memory too) / resolution / buffer_count / queue / HDR
     # picam2 = Picamera2()
@@ -217,7 +294,7 @@ def main():
 
     start_time = time.time()
     num_iterations = 0
-    # Load compiled HEFs:
+    # Load compiled HEFs for face detection, age, and gender classification
     first_hef_path = cwd + "/models_hailo/scrfd_2.5g.hef"
     second_hef_path = cwd + "/models_hailo/age_F1.hef"
     third_hef_path = cwd + "/models_hailo/gender_F1.hef"
@@ -226,76 +303,34 @@ def main():
     third_hef = HEF(third_hef_path)
     hefs = [first_hef, second_hef, third_hef]
 
-    # Creating the VDevice target with scheduler enabled
+    # Creating the VDevice target with scheduler enabled (must for running multiple models in parallel)
     params = VDevice.create_params()
     params.scheduling_algorithm = HailoSchedulingAlgorithm.ROUND_ROBIN
     params.multi_process_service = True
     with VDevice(params) as target:
         result_queue = Queue()
 
-        # #! Face
-        # hef = hefs[0]
-        # configure_params = ConfigureParams.create_from_hef(
-        #     hef=hef, interface=HailoStreamInterface.PCIe
-        # )
-        # network_groups = target.configure(hef, configure_params)
-        # face_network_group = network_groups[0]
+        # Create Hailo sessions for each model
+        (
+            face_network_group,
+            face_input_vstreams_params,
+            face_output_vstreams_params,
+            face_input_vstream_info,
+        ) = hailo_session(hefs[0], target)
+        (
+            age_network_group,
+            age_input_vstreams_params,
+            age_output_vstreams_params,
+            age_input_vstream_info,
+        ) = hailo_session(hefs[1], target)
+        (
+            gender_network_group,
+            gender_input_vstreams_params,
+            gender_output_vstreams_params,
+            gender_input_vstream_info,
+        ) = hailo_session(hefs[2], target)
 
-        # # Create input and output virtual streams params
-        # input_format_type = hef.get_input_vstream_infos()[0].format.type
-        # face_input_vstreams_params = InputVStreamParams.make_from_network_group(
-        #     face_network_group, format_type=input_format_type
-        # )
-        # face_output_vstreams_params = OutputVStreamParams.make_from_network_group(
-        #     face_network_group, format_type=getattr(FormatType, "FLOAT32")
-        # )
-
-        # # Define dataset params
-        # face_input_vstream_info = hef.get_input_vstream_infos()[0]
-
-        # #! Age
-        # hef = hefs[1]
-        # configure_params = ConfigureParams.create_from_hef(
-        #     hef=hef, interface=HailoStreamInterface.PCIe
-        # )
-        # network_groups = target.configure(hef, configure_params)
-        # age_network_group = network_groups[0]
-
-        # # Create input and output virtual streams params
-        # input_format_type = hef.get_input_vstream_infos()[0].format.type
-        # age_input_vstreams_params = InputVStreamParams.make_from_network_group(
-        #     age_network_group, format_type=input_format_type
-        # )
-        # age_output_vstreams_params = OutputVStreamParams.make_from_network_group(
-        #     age_network_group, format_type=getattr(FormatType, "FLOAT32")
-        # )
-
-        # # Define dataset params
-        # age_input_vstream_info = hef.get_input_vstream_infos()[0]
-
-        # #! Gender
-        # hef = hefs[2]
-        # configure_params = ConfigureParams.create_from_hef(
-        #     hef=hef, interface=HailoStreamInterface.PCIe
-        # )
-        # network_groups = target.configure(hef, configure_params)
-        # gender_network_group = network_groups[0]
-
-        # # Create input and output virtual streams params
-        # input_format_type = hef.get_input_vstream_infos()[0].format.type
-        # gender_input_vstreams_params = InputVStreamParams.make_from_network_group(
-        #     gender_network_group, format_type=input_format_type
-        # )
-        # gender_output_vstreams_params = OutputVStreamParams.make_from_network_group(
-        #     gender_network_group, format_type=getattr(FormatType, "FLOAT32")
-        # )
-        # # Define dataset params
-        # gender_input_vstream_info = hef.get_input_vstream_infos()[0]
-
-        face_network_group, face_input_vstreams_params, face_output_vstreams_params, face_input_vstream_info = hailo_session(hefs[0], target)
-        age_network_group, age_input_vstreams_params, age_output_vstreams_params, age_input_vstream_info = hailo_session(hefs[1], target)
-        gender_network_group, gender_input_vstreams_params, gender_output_vstreams_params, gender_input_vstream_info = hailo_session(hefs[2], target)
-
+        # Video output setup if video-testing is enabled
         if args.video_testing:
             fourcc = cv2.VideoWriter_fourcc(*"mp4v")
             out = cv2.VideoWriter(
@@ -316,6 +351,7 @@ def main():
                 return
             print("Successfully connected to the RTSP stream.")
 
+        # Main processing loop
         while True:
             if not args.video_testing or not args.rtsp:
                 frame = picam2.capture_array("main")
@@ -328,6 +364,7 @@ def main():
                     break
             frame_height, frame_width, _ = frame.shape
 
+            # Perform face detection
             boxes, points = detector.detect(
                 face_network_group,
                 face_input_vstreams_params,
@@ -339,21 +376,29 @@ def main():
                 input_size=(640, 640),
                 hailo_inference_face=infer,
             )
+
+            # Process each detected face
             for box in boxes:
                 x1, y1, x2, y2, score = box
-                
+
                 if not args.margin:
                     x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
                 else:
                     x1, y1, x2, y2 = add_margin(frame, (x1, y1, x2, y2))
-                x1, y1, x2, y2 = np.clip([x1, y1, x2, y2], 0, [frame_width, frame_height, frame_width, frame_height])
+
+                # Ensure the bounding box stays within the image boundaries
+                x1, y1, x2, y2 = np.clip(
+                    [x1, y1, x2, y2],
+                    0,
+                    [frame_width, frame_height, frame_width, frame_height],
+                )
                 cropped_image = frame[y1:y2, x1:x2]
                 if cropped_image.shape[0] == 0 or cropped_image.shape[1] == 0:
                     continue
                 processed_image = preprocess_image(cropped_image)
 
+                # Create and start inference processes for age and gender classification
                 input_data = {age_input_vstream_info.name: processed_image}
-                # Create infer process
                 age_infer_process = Process(
                     target=infer,
                     args=(
@@ -368,7 +413,6 @@ def main():
                 age_infer_process.start()
 
                 input_data = {gender_input_vstream_info.name: processed_image}
-                # Create infer process
                 gender_infer_process = Process(
                     target=infer,
                     args=(
@@ -382,6 +426,7 @@ def main():
                 )
                 gender_infer_process.start()
 
+                # Retrieve and process the inference results
                 res_age, res_gender = None, None
                 while not res_age or not res_gender:
                     model, res = result_queue.get()
@@ -391,16 +436,11 @@ def main():
                     else:
                         res_gender = res
                         gender_infer_process.join()
-                # res_age, res_gender = None, None
-                # while not res_gender:
-                #     model, res = result_queue.get()
-                #     if model == "gender":
-                #         res_gender = res
-                #         gender_infer_process.join()
 
                 age = pred_to_age[age_to_age[res_age["age/softmax1"][0].argmax()]]
                 gender = pred_to_gender[res_gender["gender/softmax1"][0].argmax()]
 
+                # Annotate the frame with the age and gender predictions
                 cv2.putText(
                     frame,
                     f"{gender}:{age}",
@@ -412,11 +452,12 @@ def main():
                     cv2.LINE_AA,
                 )
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            # if points is not None:
-            #     for point in points:
-            #         for kp in point:
-            #             kp = kp.astype(np.int32)
-            #             cv2.circle(frame, tuple(kp), 1, (0, 255, 0), 2)
+            if points is not None:
+                for point in points:
+                    for kp in point:
+                        kp = kp.astype(np.int32)
+                        cv2.circle(frame, tuple(kp), 1, (0, 255, 0), 2)
+
             iteration_time = time.time() - start_time
             num_iterations += 1
             fps = num_iterations / iteration_time
@@ -427,6 +468,8 @@ def main():
 
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
+
+    # End of the main processing loop
     end_time = time.time()
     time_elapsed = end_time - start_time
     iterations_per_second = num_iterations / time_elapsed

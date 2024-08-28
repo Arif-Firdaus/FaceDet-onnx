@@ -56,7 +56,25 @@ def write_text_top_left(image, text, font_scale=1.5, color=(0, 255, 0), thicknes
     return image
 
 
-def add_margin(img, bbox, height_margin=0.2, width_margin=0.1):
+def add_margin(
+    img: np.ndarray,
+    bbox: tuple,
+    height_margin: float = 0.20,
+    width_margin: float = 0.10,
+) -> tuple:
+    """
+    Adjusts a bounding box by adding a margin around it.
+
+    Args:
+        img (numpy.ndarray): The image containing the bounding box.
+        bbox (tuple): A tuple containing the bounding box coordinates (left, top, right, bottom).
+        height_margin (float): The fractional margin to add to the height of the bounding box (default: 0.20).
+        width_margin (float): The fractional margin to add to the width of the bounding box (default: 0.10).
+
+    Returns:
+        tuple: Adjusted bounding box coordinates (new_left, new_top, new_right, new_bottom) as integers,
+               ensuring the bounding box stays within the image boundaries.
+    """
     img_width, img_height = img.shape[1], img.shape[0]
     left, top, right, bottom = bbox
 
@@ -78,7 +96,17 @@ def add_margin(img, bbox, height_margin=0.2, width_margin=0.1):
     return int(new_left), int(new_top), int(new_right), int(new_bottom)
 
 
-def preprocess_image(image, input_size=(640, 640)):
+def preprocess_image(image: np.ndarray, input_size: tuple = (640, 640)) -> np.ndarray:
+    """
+    Preprocesses an image by resizing it to the specified input size and formatting it for model input.
+
+    Args:
+        image (numpy.ndarray): The original image to preprocess.
+        input_size (tuple): The target size (width, height) for resizing the image (default: (640, 640)).
+
+    Returns:
+        numpy.ndarray: The preprocessed image, resized and expanded with an extra dimension to match model input requirements.
+    """
     image_resized = cv2.resize(image, input_size, interpolation=cv2.INTER_LINEAR)
     image_resized = cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB)
     image_resized = image_resized / 255.0
@@ -88,6 +116,19 @@ def preprocess_image(image, input_size=(640, 640)):
 
 
 def main():
+    """
+    Main function to execute the face detection and age/gender classification pipeline.
+
+    This function sets up the camera configuration, loads the ONNX models for face detection,
+    age and gender classification, and processes video input from a live camera feed.
+    It performs inference using the onnxruntime and displays the results.
+
+    Args:
+        None. All parameters are parsed from command-line arguments.
+
+    Returns:
+        None. This function runs indefinitely until manually terminated.
+    """
     cwd = os.getcwd()
     parser = ArgumentParser()
     parser.add_argument(
@@ -98,29 +139,31 @@ def main():
     )
     parser.add_argument(
         "--write-video",
-        type=bool,
-        default=False,
+        dest="write_video",
+        action="store_true",
         help="write video stream with/without inference to demo folder",
     )
     parser.add_argument(
         "--margin",
-        type=bool,
-        default=False,
+        dest="margin",
+        action="store_true",
         help="add margin to face bounding box",
     )
-
     args = parser.parse_args()
+
+    # Initialize the face detector
     detector = FaceDetector(args.face_model)
+
     if platform == "darwin":
         ep = ["CoreMLExecutionProvider", "CPUExecutionProvider"]
     else:
         ep = ["CPUExecutionProvider"]
+
     # ONNX model initialization
     age_session = InferenceSession(
         cwd + "/models_onnx/yolov8n_age_train.onnx",
         providers=ep,
     )
-
     age_session.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
     gender_session = InferenceSession(
@@ -129,6 +172,7 @@ def main():
     )
     gender_session.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
+    # * Define mappings for age and gender classification
     # Mapping from model output index to encoded age group
     age_to_age = {
         0: 0,
@@ -168,6 +212,7 @@ def main():
     pred_to_gender = {0: "F", 1: "M"}
 
     cap = cv2.VideoCapture(0)
+    # Video output setup if write-video is enabled
     if args.write_video:
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         out = cv2.VideoWriter("demo/test_video.mp4", fourcc, 15.0, (1920, 1080))
@@ -179,18 +224,23 @@ def main():
         return
     start_time = time.time()
     num_iterations = 0
+
+    # Main processing loop
     while True:
         ret, frame = cap.read()
         if not ret:
             break
-        height, width, _ = frame.shape
+        frame_height, frame_width, _ = frame.shape
         frame = cv2.flip(frame, 1)
         if args.write_video:
             out.write(frame)
 
+        # Perform face detection
         boxes, points = detector.detect(
             img=frame, score_thresh=0.5, input_size=(640, 640)
         )
+
+        # Process each detected face
         for box in boxes:
             x1, y1, x2, y2, score = box
 
@@ -201,14 +251,22 @@ def main():
 
             # Ensure the bounding box stays within the image boundaries
             x1, y1, x2, y2 = np.clip(
-                [x1, y1, x2, y2], 0, [width, height, width, height]
+                [x1, y1, x2, y2],
+                0,
+                [frame_width, frame_height, frame_width, frame_height],
             )
             cropped_image = frame[y1:y2, x1:x2]
+            if cropped_image.shape[0] == 0 or cropped_image.shape[1] == 0:
+                    continue
             processed_image = preprocess_image(cropped_image)
+
+            # Perform age and gender inference
             res_age = age_session.run(None, {"images": processed_image})
             res_gender = gender_session.run(None, {"images": processed_image})
             age = pred_to_age[age_to_age[res_age[0].argmax()]]
             gender = pred_to_gender[res_gender[0].argmax()]
+
+            # Annotate the frame with the age and gender predictions
             cv2.putText(
                 frame,
                 f"{gender}:{age}",
@@ -232,6 +290,7 @@ def main():
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
+    # End of the main processing loop
     end_time = time.time()
     time_elapsed = end_time - start_time
     iterations_per_second = num_iterations / time_elapsed
