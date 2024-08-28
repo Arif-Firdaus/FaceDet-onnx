@@ -193,34 +193,34 @@ def main():
     # Picamera2 coifiguration setup
     #! Configuration options that affects the FPS by order (from highest to lowest):
     # ? noise reduction mode / Sensor modes / colour_space or format (memory too) / resolution / buffer_count / queue / HDR
-    picam2 = Picamera2()
-    picam2.set_controls(
-        {
-            "NoiseReductionMode": controls.draft.NoiseReductionModeEnum.Fast,  # ? HighQuality, Fast
-            "HdrMode": controls.HdrModeEnum.Night,                             # ? Night, SingleExposure
-        }
-    )
-    mode = picam2.sensor_modes[0]                      # ? There are three sensor modes available for the v3 camera / HDR only one
-    camera_res_height = 960                            # ? Both resolution need to follow the given aligh_configuration resolution
-    camera_res_width = 1536
-    camera_config = picam2.create_video_configuration( # ? Configuration for main stream
-        colour_space=ColorSpace.Rec709(),
-        queue=True,
-        sensor={"output_size": mode["size"], "bit_depth": mode["bit_depth"]},
-        main={"size": (camera_res_width, camera_res_height), "format": "YUV420"},
-        buffer_count=9,
-    )                             
-    picam2.align_configuration(camera_config)          # ? Align the configuration to the allowed values
-    print(camera_config["main"])
-    picam2.configure(camera_config)                    # ? Init the camera with the given configuration
-    picam2.start()
+    # picam2 = Picamera2()
+    # picam2.set_controls(
+    #     {
+    #         "NoiseReductionMode": controls.draft.NoiseReductionModeEnum.Fast,  # ? HighQuality, Fast
+    #         "HdrMode": controls.HdrModeEnum.Night,                             # ? Night, SingleExposure
+    #     }
+    # )
+    # mode = picam2.sensor_modes[0]                      # ? There are three sensor modes available for the v3 camera / HDR only one
+    # camera_res_height = 960                            # ? Both resolution need to follow the given aligh_configuration resolution
+    # camera_res_width = 1536
+    # camera_config = picam2.create_video_configuration( # ? Configuration for main stream
+    #     colour_space=ColorSpace.Rec709(),
+    #     queue=True,
+    #     sensor={"output_size": mode["size"], "bit_depth": mode["bit_depth"]},
+    #     main={"size": (camera_res_width, camera_res_height), "format": "YUV420"},
+    #     buffer_count=9,
+    # )                             
+    # picam2.align_configuration(camera_config)          # ? Align the configuration to the allowed values
+    # print(camera_config["main"])
+    # picam2.configure(camera_config)                    # ? Init the camera with the given configuration
+    # picam2.start()
 
     start_time = time.time()
     num_iterations = 0
     # Load compiled HEFs:
     first_hef_path = cwd + "/models_hailo/scrfd_2.5g.hef"
-    second_hef_path = cwd + "/models_hailo/age_O1.hef"
-    third_hef_path = cwd + "/models_hailo/gender_O.hef"
+    second_hef_path = cwd + "/models_hailo/age_F1.hef"
+    third_hef_path = cwd + "/models_hailo/gender_F1.hef"
     first_hef = HEF(first_hef_path)
     second_hef = HEF(second_hef_path)
     third_hef = HEF(third_hef_path)
@@ -307,15 +307,24 @@ def main():
             if not cap.isOpened():
                 print("Error: Could not open webcam.")
                 return
+        elif args.rtsp:
+            rtsp_url = 'rtsp://127.0.0.1:8554/cam1'
+
+            cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
+            if not cap.isOpened():
+                print("Error: Could not open RTSP stream.")
+                return
+            print("Successfully connected to the RTSP stream.")
 
         while True:
-            if not args.video_testing:
+            if not args.video_testing or not args.rtsp:
                 frame = picam2.capture_array("main")
                 frame = cv2.cvtColor(frame, cv2.COLOR_YUV420p2RGB)
                 frame = cv2.flip(frame, 1)
             else:
                 ret, frame = cap.read()
                 if not ret:
+                    print("Failed to grab a frame from the stream.")
                     break
             frame_height, frame_width, _ = frame.shape
 
