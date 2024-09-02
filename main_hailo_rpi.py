@@ -211,6 +211,12 @@ def main():
     cwd = os.getcwd()
     parser = ArgumentParser()
     parser.add_argument(
+        "--rtsp",
+        dest="rtsp",
+        action="store_true",
+        help="use frames from rtsp stream for inference",
+    )
+    parser.add_argument(
         "--video-testing",
         dest="video_testing",
         action="store_true",
@@ -267,30 +273,31 @@ def main():
 
     pred_to_gender = {0: "F", 1: "M"}
 
-    # Picamera2 configuration setup
-    #! Configuration options that affects the FPS by order (from highest to lowest):
-    # ? noise reduction mode / Sensor modes / colour_space or format (memory too) / resolution / buffer_count / queue / HDR
-    # picam2 = Picamera2()
-    # picam2.set_controls(
-    #     {
-    #         "NoiseReductionMode": controls.draft.NoiseReductionModeEnum.Fast,  # ? HighQuality, Fast
-    #         "HdrMode": controls.HdrModeEnum.Night,                             # ? Night, SingleExposure
-    #     }
-    # )
-    # mode = picam2.sensor_modes[0]                      # ? There are three sensor modes available for the v3 camera / HDR only one
-    # camera_res_height = 960                            # ? Both resolution need to follow the given aligh_configuration resolution
-    # camera_res_width = 1536
-    # camera_config = picam2.create_video_configuration( # ? Configuration for main stream
-    #     colour_space=ColorSpace.Rec709(),
-    #     queue=True,
-    #     sensor={"output_size": mode["size"], "bit_depth": mode["bit_depth"]},
-    #     main={"size": (camera_res_width, camera_res_height), "format": "YUV420"},
-    #     buffer_count=9,
-    # )                             
-    # picam2.align_configuration(camera_config)          # ? Align the configuration to the allowed values
-    # print(camera_config["main"])
-    # picam2.configure(camera_config)                    # ? Init the camera with the given configuration
-    # picam2.start()
+    if not args.rtsp:
+        # Picamera2 configuration setup
+        #! Configuration options that affects the FPS by order (from highest to lowest):
+        # ? noise reduction mode / Sensor modes / colour_space or format (memory too) / resolution / buffer_count / queue / HDR
+        picam2 = Picamera2()
+        picam2.set_controls(
+            {
+                "NoiseReductionMode": controls.draft.NoiseReductionModeEnum.Fast,  # ? HighQuality, Fast
+                "HdrMode": controls.HdrModeEnum.Night,                             # ? Night, SingleExposure
+            }
+        )
+        mode = picam2.sensor_modes[0]                      # ? There are three sensor modes available for the v3 camera / HDR only one
+        camera_res_height = 960                            # ? Both resolution need to follow the given aligh_configuration resolution
+        camera_res_width = 1536
+        camera_config = picam2.create_video_configuration( # ? Configuration for main stream
+            colour_space=ColorSpace.Rec709(),
+            queue=True,
+            sensor={"output_size": mode["size"], "bit_depth": mode["bit_depth"]},
+            main={"size": (camera_res_width, camera_res_height), "format": "YUV420"},
+            buffer_count=9,
+        )                             
+        picam2.align_configuration(camera_config)          # ? Align the configuration to the allowed values
+        print(camera_config["main"])
+        picam2.configure(camera_config)                    # ? Init the camera with the given configuration
+        picam2.start()
 
     start_time = time.time()
     num_iterations = 0
@@ -343,9 +350,10 @@ def main():
                 print("Error: Could not open webcam.")
                 return
         elif args.rtsp:
-            rtsp_url = 'rtsp://127.0.0.1:8554/cam1'
-
-            cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
+            # gst_pipeline = "rtspsrc protocols=udp location=rtsp://127.0.0.1:8554/cam1 latency=0 ! queue ! decodebin ! videoconvert ! video/x-raw,format=I420 ! appsink drop=1"
+            gst_pipeline = 'rtspsrc protocols=tcp location="rtsp://admin:tapway123@192.168.0.198:554/cam/realmonitor?channel=1&subtype=1" latency=0 ! queue ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! video/x-raw,format=I420 ! appsink drop=1'
+            
+            cap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
             if not cap.isOpened():
                 print("Error: Could not open RTSP stream.")
                 return
@@ -353,12 +361,13 @@ def main():
 
         # Main processing loop
         while True:
-            if not args.video_testing or not args.rtsp:
+            if not args.video_testing and not args.rtsp:
                 frame = picam2.capture_array("main")
                 frame = cv2.cvtColor(frame, cv2.COLOR_YUV420p2RGB)
                 frame = cv2.flip(frame, 1)
             else:
                 ret, frame = cap.read()
+                frame = cv2.cvtColor(frame, cv2.COLOR_YUV420p2RGB)
                 if not ret:
                     print("Failed to grab a frame from the stream.")
                     break
@@ -477,7 +486,10 @@ def main():
     print(f"Total time elapsed: {time_elapsed} seconds")
     print(f"Iterations per second: {iterations_per_second}")
     if args.video_testing:
+        cap.release()
         out.release()
+    elif args.rtsp:
+        cap.release()
     cv2.destroyAllWindows()
 
 
