@@ -69,3 +69,19 @@ For Hailo with RPi5
 ```
 python main_hailo_rpi.py [--video-testing] [--margin]
 ```
+
+## Custom model compilation
+
+For custom model compilation, refer configs/hailo/resnet18_age.json for creating new configuration file for the custom model.
+
+1. **Docker Script Environment**
+```
+Will add soon once environment replication with docker is completed
+```
+
+2. **Followed by below, to export the custom model to Hailo HEF using the new config**
+```
+python3 scripts/hailo_export.py configs/hailo/resnet18_age.json
+```
+
+3. **Run results will be in the runs/ folder**
