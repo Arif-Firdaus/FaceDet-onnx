@@ -274,14 +274,14 @@ def main():
     picam2.set_controls(
         {
             "NoiseReductionMode": controls.draft.NoiseReductionModeEnum.Fast,  # ? HighQuality, Fast
-            "HdrMode": controls.HdrModeEnum.Night,  # ? Night, SingleExposure
+            "HdrMode": controls.HdrModeEnum.Night,                             # ? Night, SingleExposure
         }
     )
-    mode = picam2.sensor_modes[0]  # ? There are three sensor modes available for the v3 camera / HDR only one
-    camera_res_height = 960  # ? Both resolution need to follow the given aligh_configuration resolution
+    mode = picam2.sensor_modes[0]                                              # ? There are three sensor modes available for the v3 camera / HDR only one
+    camera_res_height = 960                                                    # ? Both resolution need to follow the given aligh_configuration resolution
     camera_res_width = 1536
     camera_config = (
-        picam2.create_video_configuration(  # ? Configuration for main stream
+        picam2.create_video_configuration(                                     # ? Configuration for main stream
             colour_space=ColorSpace.Rec709(),
             queue=True,
             sensor={"output_size": mode["size"], "bit_depth": mode["bit_depth"]},
@@ -291,17 +291,17 @@ def main():
     )
     picam2.align_configuration(
         camera_config
-    )  # ? Align the configuration to the allowed values
+    )                                                                          # ? Align the configuration to the allowed values
     print(camera_config["main"])
-    picam2.configure(camera_config)  # ? Init the camera with the given configuration
+    picam2.configure(camera_config)                                            # ? Init the camera with the given configuration
     picam2.start()
 
     start_time = time.time()
     num_iterations = 0
     # Load compiled HEFs for face detection, age, and gender classification
-    first_hef_path = cwd + "/models_hailo/scrfd_2.5g.hef"
-    second_hef_path = cwd + "/models_hailo/age_O1.hef"
-    third_hef_path = cwd + "/models_hailo/gender_O.hef"
+    first_hef_path = cwd + "/models/hailo/scrfd_2.5g.hef"
+    second_hef_path = cwd + "/models/hailo/age_O1.hef"
+    third_hef_path = cwd + "/models/hailo/gender_O.hef"
     first_hef = HEF(first_hef_path)
     second_hef = HEF(second_hef_path)
     third_hef = HEF(third_hef_path)
