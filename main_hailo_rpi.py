@@ -299,9 +299,9 @@ def main():
     start_time = time.time()
     num_iterations = 0
     # Load compiled HEFs for face detection, age, and gender classification
-    first_hef_path = cwd + "/models/hailo/scrfd_2.5g.hef"
-    second_hef_path = cwd + "/models/hailo/age_O1.hef"
-    third_hef_path = cwd + "/models/hailo/gender_O.hef"
+    first_hef_path = cwd + "/models_hailo/scrfd_2.5g.hef"
+    second_hef_path = cwd + "/models_hailo/age_F1.hef"
+    third_hef_path = cwd + "/models_hailo/gender_F1.hef"
     first_hef = HEF(first_hef_path)
     second_hef = HEF(second_hef_path)
     third_hef = HEF(third_hef_path)
@@ -346,16 +346,25 @@ def main():
             if not cap.isOpened():
                 print("Error: Could not open webcam.")
                 return
+        elif args.rtsp:
+            rtsp_url = 'rtsp://127.0.0.1:8554/cam1'
+
+            cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
+            if not cap.isOpened():
+                print("Error: Could not open RTSP stream.")
+                return
+            print("Successfully connected to the RTSP stream.")
 
         # Main processing loop
         while True:
-            if not args.video_testing:
+            if not args.video_testing or not args.rtsp:
                 frame = picam2.capture_array("main")
                 frame = cv2.cvtColor(frame, cv2.COLOR_YUV420p2RGB)
                 frame = cv2.flip(frame, 1)
             else:
                 ret, frame = cap.read()
                 if not ret:
+                    print("Failed to grab a frame from the stream.")
                     break
             frame_height, frame_width, _ = frame.shape
 
