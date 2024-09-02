@@ -134,7 +134,7 @@ def main():
     parser.add_argument(
         "--face-model",
         type=str,
-        default=cwd + "/models_onnx/scrfd_2.5g_bn.onnx",
+        default=cwd + "/models/onnx/scrfd_2.5g_bn.onnx",
         help="model file path",
     )
     parser.add_argument(
@@ -161,13 +161,13 @@ def main():
 
     # ONNX model initialization
     age_session = InferenceSession(
-        cwd + "/models_onnx/yolov8n_age_train.onnx",
+        cwd + "/models/onnx/yolov8n_age_train.onnx",
         providers=ep,
     )
     age_session.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
     gender_session = InferenceSession(
-        cwd + "/models_onnx/yolov8n_gender_train.onnx",
+        cwd + "/models/onnx/yolov8n_gender_train.onnx",
         providers=ep,
     )
     gender_session.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
