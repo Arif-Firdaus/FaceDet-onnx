@@ -69,3 +69,68 @@ For Hailo with RPi5
 ```
 python main_hailo_rpi.py [--video-testing] [--margin]
 ```
+
+## Model compilation (Custom)
+
+For custom model compilation, refer configs/hailo/resnet18_age.json for creating new configuration file for the custom model.
+
+1. **Docker Script Environment**
+```
+Will add soon once environment replication with docker is completed
+```
+
+2. **Followed by below, to export the custom model to Hailo HEF using the new config**
+```
+python3 scripts/hailo_export.py configs/hailo/resnet18_age.json
+```
+
+3. **Run results will be in the runs/ folder**
+
+## Model compilation notes
+
+Considerations before using Hailo 3.28.0:
+
+1. Model architecture:
+   1. No layer normalization: Layer normalization is not supported, batch normalization is preferred
+   2. Transpose restriction: refer to the documentation for transpose restrictions
+   3. Squeeze & Excitation Kernel Size: Even though it can successfully be translated, the quantization process is sensitive to the S&E kernel size and might fail
+
+2. Practice:
+   1. It’s best to run the Hailo export script with a GPU so optimization and quantization can be done
+   2. Must use real calibration images ≥ 1024 and not random values
+
+3. Config:
+   1. Optimization level
+   2. Compression level
+   3. calibset_size / dataset_size
+   4. compiler_optimization_level
+  
+## Configuration
+
+Before running the model, ensure you have configured the necessary parameters:
+
+- **Hailo Hardware Architecture**: Set to `hailo8l`.
+- **Start Node Names**: Optional, set to `null` if not specified.
+- **End Node Names**: Optional, set to `null` if not specified.
+- **Images Path**: Path to the calibration images `/calib_data/image1.jpg'.
+- **Calibration Data NPY**: Set to `null` to create a new calibration data or set path to a processed calibration data Ex: `calib_data.npy`.
+- **Model Name**: Set to model name Ex: `resnet18_age`.
+- **Model Path**: Path to the PyTorch model file `models/torch/age.pt`.
+- **Batch Size**: Set to `1` for single image inference.
+- **Input Resolution**: Set the input image resolution `[224, 224]`.
+- **Input Names**: The onnx input tensor name is `["image"]`.
+- **Output Names**: The onnx output tensor name is `["age"]`.
+
+### Quantization and Optimization
+
+Include the following optimization configurations in the alls script:
+
+```
+normalization1 = normalization([122.770935, 116.74601, 104.093735], [68.500534, 66.63216, 70.323166])
+model_optimization_flavor(optimization_level=2, compression_level=1, batch_size=8)
+model_optimization_config(compression_params, auto_4bit_weights_ratio=0.2)
+model_optimization_config(calibration, batch_size=8, calibset_size=num_calibration_images)
+model_optimization_config(globals, multiproc_policy=allowed)
+post_quantization_optimization(finetune, policy=enabled, dataset_size=num_calibration_images)
+model_optimization_config(checker_cfg, batch_size=4)
+```
