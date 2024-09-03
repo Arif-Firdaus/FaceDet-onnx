@@ -302,9 +302,9 @@ def main():
     start_time = time.time()
     num_iterations = 0
     # Load compiled HEFs for face detection, age, and gender classification
-    first_hef_path = cwd + "/models_hailo/scrfd_2.5g.hef"
-    second_hef_path = cwd + "/models_hailo/age_F1.hef"
-    third_hef_path = cwd + "/models_hailo/gender_F1.hef"
+    first_hef_path = cwd + "/models/hailo/scrfd_2.5g.hef"
+    second_hef_path = cwd + "/models/hailo/age_F1.hef"
+    third_hef_path = cwd + "/models/hailo/gender_F1.hef"
     first_hef = HEF(first_hef_path)
     second_hef = HEF(second_hef_path)
     third_hef = HEF(third_hef_path)
