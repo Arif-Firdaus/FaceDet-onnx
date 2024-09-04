@@ -114,6 +114,7 @@ RUN --mount=type=cache,target=/root/.cache/apt apt install -y zlib1g && \
     apt update && \
     apt install -y libcudnn8=8.9.6.50-1+cuda11.8 libcudnn8-dev=8.9.6.50-1+cuda11.8 && \
     rm -rf cudnn-local-repo-ubuntu2204-8.9.6.50_1.0-1_amd64.deb /var/cudnn-local-repo-ubuntu2204-8.9.6.50 && \
+    apt install -y nvidia-dkms-525 nvidia-driver-525 nvidia-utils-525 && \
     apt purge -y --auto-remove && \
     apt clean && \
     rm -rf /var/lib/apt/lists/* /root/.cache/apt/*
