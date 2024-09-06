@@ -1,0 +1,72 @@
+# Base image with platform specification
+FROM --platform=linux/amd64 ubuntu:22.04
+
+# Argument for Python version
+ARG PYTHON_VERSION=3.8
+
+# Set environment variables
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install base dependencies and Python
+RUN --mount=type=cache,target=/root/.cache/apt apt update && apt upgrade -y && \
+    apt install -y --no-install-recommends \
+        software-properties-common \
+        tzdata \
+        wget \
+        gnupg \
+        graphviz \
+        libgraphviz-dev \
+        zlib1g \
+        linux-headers-$(uname -r) && \
+        # Install linux-headers for CUDA installation
+    ln -fs /usr/share/zoneinfo/Etc/UTC /etc/localtime && \
+    dpkg-reconfigure --frontend noninteractive tzdata && \
+    add-apt-repository -y ppa:deadsnakes/ppa && \
+    apt update && \
+    apt install -y --no-install-recommends \
+        python${PYTHON_VERSION} \
+        python${PYTHON_VERSION}-distutils \
+        python${PYTHON_VERSION}-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install Python pip
+RUN --mount=type=cache,target=/root/.cache/pip wget https://bootstrap.pypa.io/get-pip.py && \
+    python${PYTHON_VERSION} get-pip.py && \
+    rm get-pip.py
+
+# Install CUDA
+RUN --mount=type=cache,target=/root/.cache/apt \
+    apt-key del 7fa2af80 && \
+    wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb && \
+    dpkg -i cuda-keyring_1.1-1_all.deb && \
+    apt update && \
+    apt install -y --no-install-recommends cuda-toolkit-11-8 cuda-drivers-525 && \
+    rm -rf cuda-keyring_1.1-1_all.deb /var/lib/apt/lists/*
+
+# Install cuDNN
+RUN --mount=type=cache,target=/root/.cache/apt wget https://plus-edge-server-libs.s3.ap-southeast-1.amazonaws.com/cudnn-local-repo-ubuntu2204-8.9.6.50_1.0-1_amd64.deb && \
+    dpkg -i cudnn-local-repo-ubuntu2204-8.9.6.50_1.0-1_amd64.deb && \
+    cp /var/cudnn-local-repo-ubuntu2204-8.9.6.50/cudnn-local-692B6C75-keyring.gpg /usr/share/keyrings/ && \
+    apt update && \
+    apt install -y --no-install-recommends \
+        libcudnn8=8.9.6.50-1+cuda11.8 \
+        libcudnn8-dev=8.9.6.50-1+cuda11.8 && \
+    rm -rf cudnn-local-repo-ubuntu2204-8.9.6.50_1.0-1_amd64.deb /var/cudnn-local-repo-ubuntu2204-8.9.6.50 && \
+    apt purge -y --auto-remove && \
+    rm -rf /var/lib/apt/lists/* /root/.cache/apt/*
+
+# Install Python packages including TensorFlow and custom dependencies
+RUN --mount=type=cache,target=/root/.cache/pip python${PYTHON_VERSION} -m pip install tensorflow[and-cuda] && \
+    wget https://plus-edge-server-libs.s3.ap-southeast-1.amazonaws.com/hailo_dataflow_compiler-3.28.0-py3-none-linux_x86_64.whl && \
+    python${PYTHON_VERSION} -m pip install hailo_dataflow_compiler-3.28.0-py3-none-linux_x86_64.whl && \
+    rm hailo_dataflow_compiler-3.28.0-py3-none-linux_x86_64.whl && \
+    python${PYTHON_VERSION} -m pip install --extra-index-url https://developer.download.nvidia.com/compute/redist nvidia-dali-cuda110 nvidia-dali-tf-plugin-cuda110 && \
+    python${PYTHON_VERSION} -m pip cache purge && \
+    rm -rf /root/.cache/pip/* /tmp/*
+
+# Set environment variables
+ENV PATH=/usr/local/cuda-11.8/bin:$PATH \
+    LD_LIBRARY_PATH=/usr/local/cuda-11.8/lib64:$LD_LIBRARY_PATH
+
+# Default command
+CMD ["/bin/bash"]
