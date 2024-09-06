@@ -1,5 +1,4 @@
 {
-    "hailo_hardware_arch": "hailo8l",
     "start_node_names": null,
     "end_node_names": null,
     "images_path": "/mnt/c/Users/arifi/Downloads/Telegram Desktop/calib_data/calib_data",
@@ -8,8 +7,6 @@
     "model_path": "models/torch/age.pt",
     "batch_size": 1,
     "input_resolution": [224, 224],
-    "input_names": ["image"],
-    "output_names": ["age"],
     "alls": [
       "normalization1 = normalization([122.770935, 116.74601, 104.093735], [68.500534, 66.63216, 70.323166])\n",
       "model_optimization_flavor(optimization_level=2, compression_level=1, batch_size=8)\n",

@@ -248,7 +248,7 @@ class ModelManager:
         self.version_directory = version_directory
         self.quantized_model_hef_path = None
         self.quantized_model_har_path = None
-        self.runner = ClientRunner(hw_arch=config["hailo_hardware_arch"])
+        self.runner = ClientRunner(hw_arch="hailo8l")
 
 
     def load_model(self):
@@ -280,8 +280,8 @@ class ModelManager:
                 input_tensor,
                 onnx_path,
                 verbose=False,
-                input_names=self.config["input_names"],
-                output_names=self.config["output_names"],
+                input_names=["image"],
+                output_names=["output"],
                 opset_version=17,
             )
             self.onnx_model = onnx.load(onnx_path)
